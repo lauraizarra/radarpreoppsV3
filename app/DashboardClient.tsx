@@ -568,6 +568,9 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
   const previous = preopp.previous;
   const montoAnterior = preopp.montoAnterior || previous?.montoEstimado || 0;
   const previousStage = preopp.etapaAnterior || previous?.etapa || "Sin snapshot";
+  const relatedActivities = activities.filter((activity) => String(activity.preoppId) === String(preopp.id) && activity.mostrarEnDetalle !== "No");
+  const hubspotLink = preopp.linkHubSpot || relatedActivities.find((activity) => activity.linkPreOpp)?.linkPreOpp || "";
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Detalle de la pre-oportunidad">
       <article className="modal-card side-panel-card">
@@ -584,8 +587,14 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
           <Detail label="Fecha de creación" value={preopp.fechaCreacion || "Sin registro"} />
           <Detail label="Última modificación" value={preopp.ultimaActividad || "Sin registro"} />
         </div>
-        <div className="modal-section"><div className="modal-section-head"><h3>Actividades de la oportunidad</h3>{preopp.linkHubSpot ? <a className="mini-link" href={preopp.linkHubSpot} target="_blank">Ver actividades en HubSpot</a> : <Pill tone="gray">HubSpot pendiente</Pill>}</div>{getActivities(preopp, activities).map((activity, index) => <div className="activity-line" key={`${activity.type}-${index}`}><span>{activity.type === "Monto" ? "💵" : activity.type === "Descarte" ? "🏃" : activity.type === "Señal" ? "🔎" : activity.type === "Cambio de etapa" ? "🔁" : activity.type === "Semana pasada" ? "🕒" : "•"}</span><div><b>{activity.type}</b><small>{activity.detail} · {activity.date}</small></div></div>)}</div>
-        <div className="modal-actions"><button className="ghost-button" onClick={onClose}>Cerrar</button>{preopp.linkHubSpot ? <a className="primary-button" href={preopp.linkHubSpot} target="_blank">Ver actividades en HubSpot</a> : <span className="primary-button disabled">HubSpot pendiente</span>}</div>
+        <div className="modal-section">
+          <div className="modal-section-head">
+            <h3>Actividades de la oportunidad</h3>
+            {hubspotLink ? <a className="mini-link" href={hubspotLink} target="_blank" rel="noreferrer">Ver actividades en HubSpot</a> : <Pill tone="gray">HubSpot pendiente</Pill>}
+          </div>
+          {getActivities(preopp, activities).map((activity, index) => <div className="activity-line" key={`${activity.type}-${index}`}><span>{activity.type === "Monto" ? "💵" : activity.type === "Descarte" ? "🏃" : activity.type === "Señal" ? "🔎" : activity.type === "Cambio de etapa" ? "🔁" : activity.type === "Semana pasada" ? "🕒" : "•"}</span><div><b>{activity.type}</b><small>{activity.detail} · {activity.date}</small></div></div>)}
+        </div>
+        <div className="modal-actions"><button className="ghost-button" onClick={onClose}>Cerrar</button></div>
       </article>
     </div>
   );
