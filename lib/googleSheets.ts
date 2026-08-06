@@ -1,5 +1,3 @@
-import sample from "../data/sample.json";
-
 export type Seller = {
   region: string;
   seller: string;
@@ -48,6 +46,8 @@ export type PreOpp = {
   iconoEstado: string;
   montoEstimado: number;
   montoAnterior: number;
+  pipelineEsperado?: number;
+  pipelineLogrado?: number;
   variacion: number;
   cambioEtapa: string;
   numeroActividades: number;
@@ -156,6 +156,19 @@ async function fetchApi(view: string): Promise<ApiResponse> {
   };
 }
 
+async function fetchOptionalApi(view: string): Promise<ApiResponse> {
+  try {
+    return await fetchApi(view);
+  } catch (error) {
+    console.warn(`La vista opcional ${view} todavía no está disponible`, error);
+
+    return {
+      rows: [],
+      updatedAt: "",
+    };
+  }
+}
+
 function mapPreOpp(r: Record<string, any>): PreOpp {
   const etapaEstaSemana = pick(r, [
     "Etapa_Esta_Semana",
@@ -179,12 +192,20 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
     "Estado",
   ]);
 
-  const pipelineEstaSemana = toNumber(
+  const pipelineLogradoEstaSemana = toNumber(
     pick(r, [
       "Pipeline_Logrado_Esta_Semana",
       "Pipeline_Logrado",
-      "Monto_estimado",
+      "Pipeline logrado esta semana",
+      "Pipeline logrado",
       "Net Revenue",
+    ])
+  );
+
+  const montoEstimadoEstaSemana = toNumber(
+    pick(r, [
+      "Monto_estimado",
+      "Monto estimado",
       "Monto",
       "Amount",
       "Deal Amount",
@@ -197,6 +218,15 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
       "Pipeline_Logrado_Semana_Pasada",
       "Monto_semana_anterior",
       "Pipeline_Anterior",
+    ])
+  );
+
+  const pipelineEsperado = toNumber(
+    pick(r, [
+      "Pipeline_Esperado",
+      "Pipeline esperado",
+      "Pipeline_Estimado",
+      "Pipeline estimado",
     ])
   );
 
@@ -247,8 +277,10 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
       "Icono Estado",
       "Icono",
     ]),
-    montoEstimado: pipelineEstaSemana,
+    montoEstimado: montoEstimadoEstaSemana || pipelineLogradoEstaSemana,
     montoAnterior: pipelineSemanaPasada,
+    pipelineEsperado,
+    pipelineLogrado: pipelineLogradoEstaSemana,
     variacion: toNumber(
       pick(r, [
         "Variacion_Monto",
@@ -330,16 +362,35 @@ function mapActivity(r: Record<string, string>): Activity {
   };
 }
 
+function preOppIdentity(preopp: PreOpp) {
+  const week = String(preopp.semanaId || preopp.semanaLabel || "").trim();
+  const id = String(preopp.id || "").trim();
+  const product = normalizeHeader(preopp.producto || "");
+
+  return `${week}||${id}||${product}`;
+}
+
+function isValidPreOppId(value: string) {
+  const clean = String(value || "").trim();
+  return Boolean(clean) && !clean.startsWith("#");
+}
+
 export async function loadData() {
   try {
-    const [preResponse, activityResponse] = await Promise.all([
+    const [preResponse, activityResponse, snapshotResponse] = await Promise.all([
       fetchApi("preopps"),
       fetchApi("activities"),
+      fetchOptionalApi("snapshots"),
     ]);
 
     const preRows = preResponse.rows;
     const activityRows = activityResponse.rows;
-    const updatedAt = preResponse.updatedAt || activityResponse.updatedAt || "";
+    const snapshotRows = snapshotResponse.rows;
+    const updatedAt =
+      preResponse.updatedAt ||
+      activityResponse.updatedAt ||
+      snapshotResponse.updatedAt ||
+      "";
 
     if (!preRows.length) {
       throw new Error("API de PreOpps incompleta");
@@ -357,9 +408,29 @@ export async function loadData() {
       estrategiaRequerida: pick(r, ["Estrategia_Requerida"]),
     }));
 
-    const preopps = preRows
+    const snapshotPreopps = snapshotRows
       .map(mapPreOpp)
-      .filter((p) => p.id);
+      .filter((p) => isValidPreOppId(p.id));
+
+    const currentPreopps = preRows
+      .map(mapPreOpp)
+      .filter((p) => isValidPreOppId(p.id));
+
+    /*
+     * Primero se cargan los snapshots y luego la vista actual. Si una semana
+     * ya existe en ambas fuentes, la fila vigente de Vercel_View prevalece.
+     */
+    const preoppsByIdentity = new Map<string, PreOpp>();
+
+    snapshotPreopps.forEach((preopp) => {
+      preoppsByIdentity.set(preOppIdentity(preopp), preopp);
+    });
+
+    currentPreopps.forEach((preopp) => {
+      preoppsByIdentity.set(preOppIdentity(preopp), preopp);
+    });
+
+    const preopps = Array.from(preoppsByIdentity.values());
 
     const activities = activityRows
       .map(mapActivity)
@@ -369,33 +440,19 @@ export async function loadData() {
       sellers,
       preopps,
       activities,
-      source: `Google Sheets privado vía Apps Script · ${preopps.length} filas`,
+      source:
+        `Google Sheets privado vía Apps Script · ${currentPreopps.length} actuales` +
+        (snapshotPreopps.length ? ` · ${snapshotPreopps.length} históricas` : ""),
       updatedAt,
     };
   } catch (error) {
-    const sellers: Seller[] = (sample as any).sellers.map((s: any) => ({
-      region: s.region,
-      seller: s.seller,
-      cumplimientoQ: s.cumplimientoQ,
-      clasificacion: s.clasificacion,
-      accion: s.accion,
-      preoppsRequeridas: s.preoppsRequeridas,
-      estrategiaRequerida: s.estrategiaRequerida,
-    }));
-
-    const preopps: PreOpp[] = (sample as any).preopps.map((p: any) =>
-      mapPreOpp(p)
-    );
-
-    const activities: Activity[] = ((sample as any).activities || []).map(
-      (a: any) => mapActivity(a)
-    );
+    console.error("No se pudo cargar la fuente privada de PreOpp Radar", error);
 
     return {
-      sellers,
-      preopps,
-      activities,
-      source: "Data local de ejemplo",
+      sellers: [] as Seller[],
+      preopps: [] as PreOpp[],
+      activities: [] as Activity[],
+      source: "Fuente privada temporalmente no disponible",
       updatedAt: "",
     };
   }

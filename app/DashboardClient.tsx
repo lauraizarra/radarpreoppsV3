@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import type { Activity, PreOpp, Seller } from "../lib/googleSheets";
 import {
   IconActivas,
@@ -170,6 +170,106 @@ function unique(values: string[]) {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "es"));
 }
 
+type WeekDescriptor = {
+  id: string;
+  label: string;
+  sortValue: number;
+};
+
+function getIsoWeekSortValue(value: string) {
+  const match = String(value || "").trim().match(/^(\d{4})-W(\d{1,2})$/i);
+
+  if (!match) return 0;
+
+  return Number(match[1]) * 100 + Number(match[2]);
+}
+
+function getWeekDescriptors(preopps: PreOpp[]) {
+  const descriptors = new Map<string, WeekDescriptor>();
+
+  preopps.forEach((preopp) => {
+    const id = String(preopp.semanaId || "").trim();
+    const label = String(preopp.semanaLabel || preopp.semanaId || "").trim();
+
+    if (!id && !label) return;
+
+    const key = id || label;
+    const current = descriptors.get(key);
+    const next = {
+      id,
+      label: label || id,
+      sortValue: getIsoWeekSortValue(id),
+    };
+
+    if (!current || next.label.length > current.label.length) {
+      descriptors.set(key, next);
+    }
+  });
+
+  return Array.from(descriptors.values()).sort((a, b) => {
+    if (a.sortValue !== b.sortValue) return a.sortValue - b.sortValue;
+    return a.label.localeCompare(b.label, "es");
+  });
+}
+
+function getPreviousIsoWeekId(weekId: string) {
+  const match = String(weekId || "").trim().match(/^(\d{4})-W(\d{1,2})$/i);
+
+  if (!match) return "";
+
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  const januaryFourth = new Date(Date.UTC(year, 0, 4, 12, 0, 0));
+  const januaryFourthDay = januaryFourth.getUTCDay() || 7;
+  const firstIsoMonday = new Date(januaryFourth);
+
+  firstIsoMonday.setUTCDate(januaryFourth.getUTCDate() - januaryFourthDay + 1);
+
+  const currentMonday = new Date(firstIsoMonday);
+  currentMonday.setUTCDate(firstIsoMonday.getUTCDate() + (week - 1) * 7 - 7);
+
+  const thursday = new Date(currentMonday);
+  thursday.setUTCDate(currentMonday.getUTCDate() + 3);
+
+  const previousIsoYear = thursday.getUTCFullYear();
+  const previousJanuaryFourth = new Date(Date.UTC(previousIsoYear, 0, 4, 12, 0, 0));
+  const previousJanuaryFourthDay = previousJanuaryFourth.getUTCDay() || 7;
+  const previousFirstIsoMonday = new Date(previousJanuaryFourth);
+
+  previousFirstIsoMonday.setUTCDate(
+    previousJanuaryFourth.getUTCDate() - previousJanuaryFourthDay + 1
+  );
+
+  const millisecondsPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const previousWeekNumber =
+    Math.floor((currentMonday.getTime() - previousFirstIsoMonday.getTime()) / millisecondsPerWeek) + 1;
+
+  return `${previousIsoYear}-W${String(previousWeekNumber).padStart(2, "0")}`;
+}
+
+function normalizeFilterText(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function includesFilterText(value: unknown, search: string) {
+  const normalizedSearch = normalizeFilterText(search);
+  if (!normalizedSearch) return true;
+  return normalizeFilterText(value).includes(normalizedSearch);
+}
+
+function matchesWeek(preopp: PreOpp, selectedWeek: string) {
+  if (!selectedWeek) return false;
+
+  return (
+    String(preopp.semanaId || "").trim() === selectedWeek ||
+    String(preopp.semanaLabel || "").trim() === selectedWeek
+  );
+}
+
 function getField(row: unknown, names: string[]) {
   const record = row as Record<string, unknown>;
 
@@ -227,24 +327,12 @@ function getPipelineEsperadoInicial(preopp: PreOpp) {
 }
 
 function getPipelineLogradoActual(preopp: PreOpp) {
-  const valueFromRow = safeNumber(
-    getField(preopp, [
-      "pipelineLogrado",
-      "Pipeline_Logrado_Esta_Semana",
-      "Pipeline logrado esta semana",
-      "Pipeline_Logrado",
-      "Pipeline logrado",
-      "Net Revenue",
-      "Deal Amount",
-      "Deal amount",
-      "Monto",
-      "Amount",
-    ])
-  );
-
-  if (valueFromRow > 0) return valueFromRow;
-
-  return safeNumber(preopp.montoEstimado);
+  /*
+   * El KPI de pipeline usa exclusivamente Pipeline_Logrado.
+   * No toma Monto_estimado, Amount ni valores de respaldo, porque
+   * representan conceptos distintos y podían inflar el resultado.
+   */
+  return safeNumber(preopp.pipelineLogrado);
 }
 
 function getExecutiveState(preopp: Pick<PreOpp, "etapa" | "estado">): ExecutiveState {
@@ -517,8 +605,14 @@ function PipelineKpi({
 }
 
 function weekIndexMap(preopps: PreOpp[]) {
-  const weeks = unique(preopps.map((p) => p.semanaLabel || p.semanaId));
-  return new Map(weeks.map((week, index) => [week, index]));
+  const map = new Map<string, number>();
+
+  getWeekDescriptors(preopps).forEach((week, index) => {
+    if (week.id) map.set(week.id, index);
+    if (week.label) map.set(week.label, index);
+  });
+
+  return map;
 }
 
 function getRowKey(preopp: PreOpp) {
@@ -526,6 +620,18 @@ function getRowKey(preopp: PreOpp) {
 }
 
 function getPreviousRow(current: PreOpp, allRows: PreOpp[], weeks: Map<string, number>) {
+  const exactPreviousWeekId = getPreviousIsoWeekId(current.semanaId);
+
+  if (exactPreviousWeekId) {
+    return (
+      allRows.find(
+        (row) =>
+          getRowKey(row) === getRowKey(current) &&
+          row.semanaId === exactPreviousWeekId
+      ) || null
+    );
+  }
+
   const currentWeek = current.semanaLabel || current.semanaId;
   const currentIdx = weeks.get(currentWeek);
 
@@ -750,19 +856,60 @@ export default function DashboardClient({
   const [selectedState, setSelectedState] = useState("Todos");
   const [selectedProduct, setSelectedProduct] = useState("Todos");
   const [selectedAccount, setSelectedAccount] = useState("Todas");
-  const [selectedWeek, setSelectedWeek] = useState("Todas");
+  const [selectedWeek, setSelectedWeek] = useState("");
+  const [accountSearch, setAccountSearch] = useState("");
+  const [sellerSearch, setSellerSearch] = useState("");
+  const [productSearch, setProductSearch] = useState("");
   const [detail, setDetail] = useState<DetailPreOpp | null>(null);
 
-  const lastUpdatedEt = updatedAt
-    ? formatETDateTime(new Date(updatedAt))
-    : "Sin registro de actualización";
+  const [lastUpdatedEt, setLastUpdatedEt] = useState(
+    "Sin registro de actualización"
+  );
+
+  useEffect(() => {
+    setLastUpdatedEt(
+      updatedAt
+        ? formatETDateTime(new Date(updatedAt))
+        : "Sin registro de actualización"
+    );
+  }, [updatedAt]);
 
   const radarPreopps = useMemo(() => preopps.filter(isRadarProduct), [preopps]);
 
-  const weekOptions = useMemo(
-    () => ["Todas", ...unique(radarPreopps.map((p) => p.semanaLabel || p.semanaId))],
+  const weekDescriptors = useMemo(
+    () =>
+      getWeekDescriptors(radarPreopps)
+        .slice()
+        .sort((a, b) => b.sortValue - a.sortValue || b.label.localeCompare(a.label, "es")),
     [radarPreopps]
   );
+
+  const latestWeekKey = weekDescriptors[0]?.id || weekDescriptors[0]?.label || "";
+
+  const weekOptions = useMemo(
+    () => weekDescriptors.map((week) => week.label),
+    [weekDescriptors]
+  );
+
+  const selectedWeekLabel = useMemo(() => {
+    const selected = weekDescriptors.find(
+      (week) => week.id === selectedWeek || week.label === selectedWeek
+    );
+
+    return selected?.label || weekDescriptors[0]?.label || "Sin semana";
+  }, [selectedWeek, weekDescriptors]);
+
+  useEffect(() => {
+    if (!weekDescriptors.length) return;
+
+    const selectedStillExists = weekDescriptors.some(
+      (week) => week.id === selectedWeek || week.label === selectedWeek
+    );
+
+    if (!selectedStillExists) {
+      setSelectedWeek(latestWeekKey);
+    }
+  }, [latestWeekKey, selectedWeek, weekDescriptors]);
 
   const regionOptions = useMemo(() => ["Todas", ...unique(radarPreopps.map((p) => p.region))], [radarPreopps]);
 
@@ -774,14 +921,31 @@ export default function DashboardClient({
       ...unique(
         radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
-          .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
-          .filter((p) => selectedSeller === "Todos" || p.vendedor === selectedSeller)
+          .filter((p) => matchesWeek(p, selectedWeek))
+          .filter((p) =>
+            selectedSeller !== "Todos"
+              ? p.vendedor === selectedSeller
+              : includesFilterText(p.vendedor, sellerSearch)
+          )
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
-          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct)
+          .filter((p) =>
+            selectedProduct !== "Todos"
+              ? productFamily(p.producto) === selectedProduct
+              : includesFilterText(productFamily(p.producto), productSearch)
+          )
           .map((p) => p.cuenta)
       ),
     ],
-    [radarPreopps, selectedRegion, selectedWeek, selectedSeller, selectedState, selectedProduct]
+    [
+      radarPreopps,
+      selectedRegion,
+      selectedWeek,
+      selectedSeller,
+      sellerSearch,
+      selectedState,
+      selectedProduct,
+      productSearch,
+    ]
   );
 
   const sellerOptions = useMemo(
@@ -790,14 +954,31 @@ export default function DashboardClient({
       ...unique(
         radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
-          .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
-          .filter((p) => selectedAccount === "Todas" || p.cuenta === selectedAccount)
+          .filter((p) => matchesWeek(p, selectedWeek))
+          .filter((p) =>
+            selectedAccount !== "Todas"
+              ? p.cuenta === selectedAccount
+              : includesFilterText(p.cuenta, accountSearch)
+          )
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
-          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct)
+          .filter((p) =>
+            selectedProduct !== "Todos"
+              ? productFamily(p.producto) === selectedProduct
+              : includesFilterText(productFamily(p.producto), productSearch)
+          )
           .map((p) => p.vendedor)
       ),
     ],
-    [radarPreopps, selectedRegion, selectedWeek, selectedAccount, selectedState, selectedProduct]
+    [
+      radarPreopps,
+      selectedRegion,
+      selectedWeek,
+      selectedAccount,
+      accountSearch,
+      selectedState,
+      selectedProduct,
+      productSearch,
+    ]
   );
 
   const productOptions = useMemo(
@@ -806,14 +987,31 @@ export default function DashboardClient({
       ...PRODUCT_ORDER.filter((product) =>
         radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
-          .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
-          .filter((p) => selectedSeller === "Todos" || p.vendedor === selectedSeller)
-          .filter((p) => selectedAccount === "Todas" || p.cuenta === selectedAccount)
+          .filter((p) => matchesWeek(p, selectedWeek))
+          .filter((p) =>
+            selectedSeller !== "Todos"
+              ? p.vendedor === selectedSeller
+              : includesFilterText(p.vendedor, sellerSearch)
+          )
+          .filter((p) =>
+            selectedAccount !== "Todas"
+              ? p.cuenta === selectedAccount
+              : includesFilterText(p.cuenta, accountSearch)
+          )
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
           .some((p) => productFamily(p.producto) === product)
       ),
     ],
-    [radarPreopps, selectedRegion, selectedWeek, selectedSeller, selectedAccount, selectedState]
+    [
+      radarPreopps,
+      selectedRegion,
+      selectedWeek,
+      selectedSeller,
+      sellerSearch,
+      selectedAccount,
+      accountSearch,
+      selectedState,
+    ]
   );
 
   useEffect(() => {
@@ -838,15 +1036,29 @@ export default function DashboardClient({
     () =>
       radarPreopps.filter((p) => {
         if (selectedSeller !== "Todos" && p.vendedor !== selectedSeller) return false;
+        if (selectedSeller === "Todos" && !includesFilterText(p.vendedor, sellerSearch)) return false;
         if (selectedRegion !== "Todas" && p.region !== selectedRegion) return false;
-        if (selectedWeek !== "Todas" && p.semanaLabel !== selectedWeek && p.semanaId !== selectedWeek) return false;
+        if (!matchesWeek(p, selectedWeek)) return false;
         if (selectedState !== "Todos" && getExecutiveState(p) !== selectedState) return false;
         if (selectedProduct !== "Todos" && productFamily(p.producto) !== selectedProduct) return false;
+        if (selectedProduct === "Todos" && !includesFilterText(productFamily(p.producto), productSearch)) return false;
         if (selectedAccount !== "Todas" && p.cuenta !== selectedAccount) return false;
+        if (selectedAccount === "Todas" && !includesFilterText(p.cuenta, accountSearch)) return false;
 
         return true;
       }),
-    [radarPreopps, selectedSeller, selectedRegion, selectedWeek, selectedState, selectedProduct, selectedAccount]
+    [
+      radarPreopps,
+      selectedSeller,
+      sellerSearch,
+      selectedRegion,
+      selectedWeek,
+      selectedState,
+      selectedProduct,
+      productSearch,
+      selectedAccount,
+      accountSearch,
+    ]
   );
 
   const weeks = useMemo(() => weekIndexMap(radarPreopps), [radarPreopps]);
@@ -895,12 +1107,15 @@ export default function DashboardClient({
   const currentTitle = titles[view];
 
   function clearFilters() {
-    setSelectedWeek("Todas");
+    setSelectedWeek(latestWeekKey);
     setSelectedSeller("Todos");
     setSelectedRegion("Todas");
     setSelectedState("Todos");
     setSelectedProduct("Todos");
     setSelectedAccount("Todas");
+    setAccountSearch("");
+    setSellerSearch("");
+    setProductSearch("");
   }
 
   function openDetail(preopp: PreOpp) {
@@ -979,18 +1194,58 @@ export default function DashboardClient({
             <p>{currentTitle.description}</p>
           </div>
 
-          <button className="ghost-button" onClick={clearFilters}>
-            Limpiar filtros
-          </button>
+          <div className="page-header-actions">
+            <button className="ghost-button" onClick={clearFilters}>
+              Limpiar filtros
+            </button>
+
+            <form action="/api/logout" method="post" className="logout-form">
+              <button className="logout-button" type="submit">
+                Cerrar sesión
+              </button>
+            </form>
+          </div>
         </header>
 
         <section className="filter-row" aria-label="Filtros globales">
-          <Filter label="Semana" value={selectedWeek} onChange={setSelectedWeek} options={weekOptions} />
+          <Filter
+            label="Semana"
+            value={selectedWeekLabel}
+            onChange={(label) => {
+              const selected = weekDescriptors.find((week) => week.label === label);
+              setSelectedWeek(selected?.id || selected?.label || latestWeekKey);
+            }}
+            options={weekOptions}
+          />
           <Filter label="Región" value={selectedRegion} onChange={setSelectedRegion} options={regionOptions} />
-          <Filter label="Cuenta" value={selectedAccount} onChange={setSelectedAccount} options={accountOptions} wide />
-          <Filter label="Vendedor" value={selectedSeller} onChange={setSelectedSeller} options={sellerOptions} wide />
+          <Filter
+            label="Cuenta"
+            value={selectedAccount}
+            onChange={setSelectedAccount}
+            options={accountOptions}
+            searchValue={accountSearch}
+            onSearchChange={setAccountSearch}
+            wide
+          />
+          <Filter
+            label="Vendedor"
+            value={selectedSeller}
+            onChange={setSelectedSeller}
+            options={sellerOptions}
+            searchValue={sellerSearch}
+            onSearchChange={setSellerSearch}
+            wide
+          />
           <Filter label="Estado" value={selectedState} onChange={setSelectedState} options={stateOptions} />
-          <Filter label="Producto" value={selectedProduct} onChange={setSelectedProduct} options={productOptions} wide />
+          <Filter
+            label="Producto"
+            value={selectedProduct}
+            onChange={setSelectedProduct}
+            options={productOptions}
+            searchValue={productSearch}
+            onSearchChange={setProductSearch}
+            wide
+          />
         </section>
 
         <section className={`kpi-row ${kpiModeClass}`}>
@@ -1045,12 +1300,12 @@ export default function DashboardClient({
 
         <section className="context-strip">
           <strong>Vista actual:</strong>
-          <span>{selectedWeek}</span>
+          <span>{selectedWeekLabel}</span>
           <span>{selectedRegion}</span>
-          <span>{selectedAccount}</span>
-          <span>{selectedSeller}</span>
+          <span>{accountSearch || selectedAccount}</span>
+          <span>{sellerSearch || selectedSeller}</span>
           <span>{selectedState}</span>
-          <span>{selectedProduct}</span>
+          <span>{productSearch || selectedProduct}</span>
           <span>{accountProductRows.length} cuentas</span>
           <span>{consolidatedUnits.length} PreOpps consolidadas</span>
         </section>
@@ -1081,23 +1336,271 @@ function Filter({
   value,
   options,
   onChange,
+  searchValue = "",
+  onSearchChange,
   wide = false,
 }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
   wide?: boolean;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const defaultOption = options[0] || "";
+
+  const normalizeSearch = normalizeFilterText;
+  const normalizedSearch = normalizeSearch(query);
+
+  const filteredOptions = options.filter((option) =>
+    normalizeSearch(option).includes(normalizedSearch)
+  );
+
+  const realMatches = filteredOptions.filter((option) => option !== defaultOption);
+
+  function closeFilter() {
+    setIsOpen(false);
+    setQuery("");
+  }
+
+  function openFilter() {
+    setIsOpen(true);
+    setQuery(searchValue);
+
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }
+
+  function selectOption(option: string) {
+    onChange(option);
+    onSearchChange?.("");
+    closeFilter();
+
+    window.requestAnimationFrame(() => {
+      inputRef.current?.blur();
+    });
+  }
+
+  function handleQueryChange(nextQuery: string) {
+    setQuery(nextQuery);
+    setIsOpen(true);
+    onSearchChange?.(nextQuery);
+
+    const normalizedNextQuery = normalizeSearch(nextQuery);
+
+    if (!normalizedNextQuery) {
+      if (onSearchChange && value !== defaultOption) {
+        onChange(defaultOption);
+      }
+      return;
+    }
+
+    const matchingOptions = options
+      .filter((option) => option !== defaultOption)
+      .filter((option) => normalizeSearch(option).includes(normalizedNextQuery));
+
+    const exactMatch = matchingOptions.find(
+      (option) => normalizeSearch(option) === normalizedNextQuery
+    );
+
+    const automaticMatch = exactMatch || (matchingOptions.length === 1 ? matchingOptions[0] : null);
+
+    if (onSearchChange) {
+      if (automaticMatch) {
+        onChange(automaticMatch);
+        onSearchChange("");
+        setQuery(automaticMatch);
+        setIsOpen(false);
+        return;
+      }
+
+      if (value !== defaultOption) {
+        onChange(defaultOption);
+      }
+      return;
+    }
+
+    const matchingOptionsForSelect = options
+      .filter((option) => option !== defaultOption)
+      .filter((option) => normalizeSearch(option).includes(normalizedNextQuery));
+
+    const exactMatchForSelect = matchingOptionsForSelect.find(
+      (option) => normalizeSearch(option) === normalizedNextQuery
+    );
+
+    /*
+     * Al empezar una búsqueda se libera el valor anterior para evitar que
+     * un filtro seleccionado previamente limite las nuevas opciones.
+     */
+    if (value !== defaultOption && !exactMatchForSelect && matchingOptionsForSelect.length !== 1) {
+      onChange(defaultOption);
+    }
+
+    /*
+     * Si la búsqueda deja una única coincidencia, se aplica automáticamente.
+     * Así basta con escribir una parte distintiva del nombre.
+     */
+    const automaticMatchForSelect =
+      exactMatchForSelect ||
+      (matchingOptionsForSelect.length === 1 ? matchingOptionsForSelect[0] : null);
+
+    if (automaticMatchForSelect && automaticMatchForSelect !== value) {
+      onChange(automaticMatchForSelect);
+    }
+  }
+
+  useEffect(() => {
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        closeFilter();
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, []);
+
+  /*
+   * Safari puede conservar el desplazamiento horizontal del input después
+   * de elegir una opción larga. Al cerrar el selector, devolvemos el campo
+   * al inicio para que fechas como "27 jul–02 ago 2026" se vean completas.
+   */
+  useEffect(() => {
+    if (isOpen) return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+
+      input.scrollLeft = 0;
+
+      try {
+        input.setSelectionRange(0, 0);
+      } catch {
+        // Algunos navegadores no permiten cambiar la selección en readOnly.
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isOpen, value]);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      closeFilter();
+      event.currentTarget.blur();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      setIsOpen(true);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const exactMatch = realMatches.find(
+        (option) => normalizeSearch(option) === normalizedSearch
+      );
+
+      const nextOption = exactMatch || realMatches[0] || filteredOptions[0];
+
+      if (nextOption) {
+        selectOption(nextOption);
+      }
+
+      event.preventDefault();
+    }
+  }
+
+  const displayedValue = isOpen ? query : searchValue || value;
+  const placeholder = isOpen ? `Escribe para buscar ${label.toLowerCase()}` : "";
+
   return (
-    <label className={`filter-chip ${wide ? "wide-filter" : ""}`}>
+    <div
+      ref={containerRef}
+      className={`filter-chip searchable-filter ${wide ? "wide-filter" : ""} ${isOpen ? "is-open" : ""}`}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          closeFilter();
+        }
+      }}
+    >
       <span>{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((option) => (
-          <option key={option}>{option}</option>
-        ))}
-      </select>
-    </label>
+
+      <div className="filter-combobox">
+        <input
+          ref={inputRef}
+          className="filter-search-input"
+          type="text"
+          role="combobox"
+          aria-label={`Buscar y seleccionar ${label.toLowerCase()}`}
+          aria-expanded={isOpen}
+          aria-autocomplete="list"
+          autoComplete="off"
+          value={displayedValue}
+          placeholder={placeholder}
+          title={value}
+          readOnly={!isOpen}
+          onFocus={() => {
+            if (!isOpen) openFilter();
+          }}
+          onClick={() => {
+            if (!isOpen) openFilter();
+          }}
+          onChange={(event) => handleQueryChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+
+        <button
+          className="filter-toggle"
+          type="button"
+          aria-label={`Mostrar opciones de ${label.toLowerCase()}`}
+          aria-expanded={isOpen}
+          onClick={() => {
+            if (isOpen) {
+              closeFilter();
+            } else {
+              openFilter();
+            }
+          }}
+        >
+          <span aria-hidden="true">⌄</span>
+        </button>
+
+        {isOpen && (
+          <div className="filter-options" role="listbox" aria-label={`Opciones de ${label.toLowerCase()}`}>
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={option === value}
+                  className={`filter-option ${option === value ? "selected" : ""}`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    selectOption(option);
+                  }}
+                >
+                  <span className="filter-option-label">{option}</span>
+                  {option === value && <span className="filter-option-check" aria-hidden="true">✓</span>}
+                </button>
+              ))
+            ) : (
+              <div className="filter-empty">No hay coincidencias</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

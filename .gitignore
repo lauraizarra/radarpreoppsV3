@@ -5,3 +5,7 @@ node_modules/
 .vercel/
 .vercel
 .env*
+
+# Archivos automáticos de macOS
+.DS_Store
+**/.DS_Store
