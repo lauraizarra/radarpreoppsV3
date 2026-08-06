@@ -47,6 +47,13 @@ type AccountProductRow = {
   rows: PreOpp[];
 };
 
+const PRODUCT_ORDER = [
+  "App Modernization Squads",
+  "GenAI Squads",
+  "Security Assessment + Epics",
+  "Cloud EMx Ultra",
+];
+
 function currency(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -107,6 +114,20 @@ function getField(row: unknown, names: string[]) {
   }
 
   return "";
+}
+
+function formatETDateTime(date: Date) {
+  const formatted = new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/New_York",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+
+  return `${formatted.replace(",", " ·")} ET`;
 }
 
 function getPipelineEsperadoInicial(preopp: PreOpp) {
@@ -190,6 +211,14 @@ function getExecutiveState(preopp: Pick<PreOpp, "etapa" | "estado">): ExecutiveS
 
 function countsAsActive(preopp: PreOpp) {
   return ["Identificada", "Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa);
+}
+
+function countsAsConverted(preopp: PreOpp) {
+  return getExecutiveState(preopp) === "Convertidas";
+}
+
+function countsAsConvertedOrFrozen(preopp: PreOpp) {
+  return ["Convertidas", "Convertida Congelada"].includes(getExecutiveState(preopp));
 }
 
 function getAlert(preopp: PreOpp) {
@@ -289,14 +318,27 @@ function statePriority(state: ExecutiveState) {
 function productFamily(product: string) {
   const clean = product.toLowerCase();
 
-  if (clean.includes("modern")) return "Modernization Squads";
-  if (clean.includes("genai") || clean.includes("gen ai")) return "GenAI Squads";
-  if (clean.includes("security")) return "Security Epics";
-  if (clean.includes("emx")) return "Cloud EMx";
-  if (clean.includes("intellidocs") || clean.includes("document")) return "IntelliDocs";
-  if (clean.includes("compliance") || clean.includes("fsi")) return "Compliance FSI";
+  if (clean.includes("app modernization") || clean.includes("modernization squads") || clean.includes("modernizacion") || clean.includes("modernización")) {
+    return "App Modernization Squads";
+  }
 
-  return product.replace(" by Escala 24x7", "");
+  if (clean.includes("genai") || clean.includes("gen ai")) {
+    return "GenAI Squads";
+  }
+
+  if (clean.includes("security assessment") || clean.includes("security epics") || clean.includes("security")) {
+    return "Security Assessment + Epics";
+  }
+
+  if (clean.includes("cloud emx") || clean.includes("emx ultra") || clean.includes("ultra ticket") || clean.includes("emx")) {
+    return "Cloud EMx Ultra";
+  }
+
+  return "";
+}
+
+function isRadarProduct(preopp: PreOpp) {
+  return Boolean(productFamily(preopp.producto));
 }
 
 function Pill({ children, tone = "blue" }: { children: React.ReactNode; tone?: Tone }) {
@@ -342,7 +384,7 @@ function PipelineKpi({ esperado, logrado }: { esperado: number; logrado: number 
       <div className="kpi-copy pipeline-copy">
         <span>Pipeline PreOpp</span>
         <strong>{currency(logrado)}</strong>
-        <small>Pipeline logrado</small>
+        <small>Pipeline no convertido</small>
 
         <div className="pipeline-breakdown">
           <div>
@@ -390,7 +432,7 @@ function weekIndexMap(preopps: PreOpp[]) {
 }
 
 function getRowKey(preopp: PreOpp) {
-  return `${preopp.cuenta}||${preopp.vendedor}||${preopp.producto}`;
+  return `${preopp.cuenta}||${preopp.vendedor}||${productFamily(preopp.producto)}`;
 }
 
 function getPreviousRow(current: PreOpp, allRows: PreOpp[], weeks: Map<string, number>) {
@@ -449,6 +491,9 @@ function consolidatePreOppUnits(filtered: PreOpp[], allRows: PreOpp[]): Consolid
 
   filtered.forEach((row) => {
     const family = productFamily(row.producto);
+
+    if (!family) return;
+
     const key = `${row.cuenta}||${row.vendedor}||${family}`;
 
     if (!grouped.has(key)) grouped.set(key, []);
@@ -480,16 +525,8 @@ function consolidatePreOppUnits(filtered: PreOpp[], allRows: PreOpp[]): Consolid
         productFamily: productFamily(latest.producto),
         state,
         stage: bestRow.etapa,
-
-        // CAMBIO CLAVE:
-        // Antes era PIPELINE_VALUE_PER_PREOPP fijo.
-        // Ahora usa Pipeline_Esperado_Inicial de Vercel_View.
         pipelineEsperado: getPipelineEsperadoInicial(latest),
-
-        // CAMBIO CLAVE:
-        // Este es el monto real actual cargado en la oportunidad.
         pipelineLogrado: getPipelineLogradoActual(latest),
-
         latest,
         rows,
       };
@@ -565,7 +602,7 @@ function getActivities(preopp: PreOpp, activities: Activity[]) {
     },
     {
       type: "Producto",
-      detail: preopp.producto,
+      detail: productFamily(preopp.producto) || preopp.producto,
       date: preopp.ultimaActividad || "Sin fecha",
       origen: "Vercel_View",
     },
@@ -620,13 +657,20 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   const [selectedAccount, setSelectedAccount] = useState("Todas");
   const [selectedWeek, setSelectedWeek] = useState("Todas");
   const [detail, setDetail] = useState<DetailPreOpp | null>(null);
+  const [lastUpdatedEt, setLastUpdatedEt] = useState("");
+
+  useEffect(() => {
+    setLastUpdatedEt(formatETDateTime(new Date()));
+  }, []);
+
+  const radarPreopps = useMemo(() => preopps.filter(isRadarProduct), [preopps]);
 
   const weekOptions = useMemo(
-    () => ["Todas", ...unique(preopps.map((p) => p.semanaLabel || p.semanaId))],
-    [preopps]
+    () => ["Todas", ...unique(radarPreopps.map((p) => p.semanaLabel || p.semanaId))],
+    [radarPreopps]
   );
 
-  const regionOptions = useMemo(() => ["Todas", ...unique(preopps.map((p) => p.region))], [preopps]);
+  const regionOptions = useMemo(() => ["Todas", ...unique(radarPreopps.map((p) => p.region))], [radarPreopps]);
 
   const stateOptions = ["Todos", "Propuestas", "Activas", "Convertidas", "Convertida Congelada", "Descartadas"];
 
@@ -634,7 +678,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
     () => [
       "Todas",
       ...unique(
-        preopps
+        radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
           .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
           .filter((p) => selectedSeller === "Todos" || p.vendedor === selectedSeller)
@@ -643,14 +687,14 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           .map((p) => p.cuenta)
       ),
     ],
-    [preopps, selectedRegion, selectedWeek, selectedSeller, selectedState, selectedProduct]
+    [radarPreopps, selectedRegion, selectedWeek, selectedSeller, selectedState, selectedProduct]
   );
 
   const sellerOptions = useMemo(
     () => [
       "Todos",
       ...unique(
-        preopps
+        radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
           .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
           .filter((p) => selectedAccount === "Todas" || p.cuenta === selectedAccount)
@@ -659,23 +703,23 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           .map((p) => p.vendedor)
       ),
     ],
-    [preopps, selectedRegion, selectedWeek, selectedAccount, selectedState, selectedProduct]
+    [radarPreopps, selectedRegion, selectedWeek, selectedAccount, selectedState, selectedProduct]
   );
 
   const productOptions = useMemo(
     () => [
       "Todos",
-      ...unique(
-        preopps
+      ...PRODUCT_ORDER.filter((product) =>
+        radarPreopps
           .filter((p) => selectedRegion === "Todas" || p.region === selectedRegion)
           .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
           .filter((p) => selectedSeller === "Todos" || p.vendedor === selectedSeller)
           .filter((p) => selectedAccount === "Todas" || p.cuenta === selectedAccount)
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
-          .map((p) => productFamily(p.producto))
+          .some((p) => productFamily(p.producto) === product)
       ),
     ],
-    [preopps, selectedRegion, selectedWeek, selectedSeller, selectedAccount, selectedState]
+    [radarPreopps, selectedRegion, selectedWeek, selectedSeller, selectedAccount, selectedState]
   );
 
   useEffect(() => {
@@ -692,7 +736,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
 
   const filteredPreopps = useMemo(
     () =>
-      preopps.filter((p) => {
+      radarPreopps.filter((p) => {
         if (selectedSeller !== "Todos" && p.vendedor !== selectedSeller) return false;
         if (selectedRegion !== "Todas" && p.region !== selectedRegion) return false;
         if (selectedWeek !== "Todas" && p.semanaLabel !== selectedWeek && p.semanaId !== selectedWeek) return false;
@@ -702,18 +746,16 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
 
         return true;
       }),
-    [preopps, selectedSeller, selectedRegion, selectedWeek, selectedState, selectedProduct, selectedAccount]
+    [radarPreopps, selectedSeller, selectedRegion, selectedWeek, selectedState, selectedProduct, selectedAccount]
   );
 
-  const weeks = useMemo(() => weekIndexMap(preopps), [preopps]);
-  const consolidatedUnits = useMemo(() => consolidatePreOppUnits(filteredPreopps, preopps), [filteredPreopps, preopps]);
+  const weeks = useMemo(() => weekIndexMap(radarPreopps), [radarPreopps]);
+  const consolidatedUnits = useMemo(() => consolidatePreOppUnits(filteredPreopps, radarPreopps), [filteredPreopps, radarPreopps]);
   const accountProductRows = useMemo(() => getAccountProductRows(consolidatedUnits), [consolidatedUnits]);
 
   const productColumns = useMemo(() => {
-    const base = ["Modernization Squads", "GenAI Squads", "Security Epics", "Cloud EMx", "IntelliDocs", "Compliance FSI"];
     const dynamic = unique(consolidatedUnits.map((unit) => unit.productFamily));
-
-    return base.filter((product) => dynamic.includes(product)).concat(dynamic.filter((product) => !base.includes(product)));
+    return PRODUCT_ORDER.filter((product) => dynamic.includes(product));
   }, [consolidatedUnits]);
 
   const propuestas = consolidatedUnits.filter((p) => p.state === "Propuestas").length;
@@ -722,8 +764,12 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   const congeladas = consolidatedUnits.filter((p) => p.state === "Convertida Congelada").length;
   const descartadas = consolidatedUnits.filter((p) => p.state === "Descartadas").length;
 
-  const pipelineEsperado = consolidatedUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
-  const pipelineLogrado = consolidatedUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelinePreOppUnits = consolidatedUnits.filter((unit) => !["Convertidas", "Convertida Congelada"].includes(unit.state));
+  const pipelineConvertidoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertidas");
+
+  const pipelineEsperadoPreOpp = pipelinePreOppUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
+  const pipelineLogradoPreOpp = pipelinePreOppUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelineConvertido = pipelineConvertidoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
 
   const currentTitle = titles[view];
 
@@ -737,7 +783,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   }
 
   function openDetail(preopp: PreOpp) {
-    const previous = getPreviousRow(preopp, preopps, weeks);
+    const previous = getPreviousRow(preopp, radarPreopps, weeks);
     setDetail({ ...preopp, previous, changesCount: countChanges(preopp, previous) });
   }
 
@@ -771,7 +817,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
 
         <div className="sidebar-footer">
           <span>Última actualización</span>
-          <strong>Semanal · automático</strong>
+          <strong>{lastUpdatedEt || "Cargando..."}</strong>
           <small>Fuente: {source}</small>
         </div>
       </aside>
@@ -798,10 +844,10 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
         </section>
 
         <section className="kpi-row">
-          <PipelineKpi esperado={pipelineEsperado} logrado={pipelineLogrado} />
+          <PipelineKpi esperado={pipelineEsperadoPreOpp} logrado={pipelineLogradoPreOpp} />
           <KpiCard emoji="🔎" label="Propuestas" value={propuestas} hint="Etapa identificada" tone="blue" />
           <KpiCard emoji="🏃‍➡️" label="Activas" value={activas} hint="En gestión" tone="green" />
-          <KpiCard emoji="🏆" label="Convertidas" value={convertidas} hint="Pasaron a Cloud Sales" tone="teal" />
+          <KpiCard emoji="🏆" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
           <KpiCard emoji="🧊" label="Congeladas" value={congeladas} hint="Convertidas en Frozen" tone="purple" />
           <KpiCard emoji="🏃" label="Descartadas" value={descartadas} hint="Salen del pool activo" tone="gray" />
         </section>
@@ -821,7 +867,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
         {view === "overview" ? (
           <Overview accounts={accountProductRows} productColumns={productColumns} openDetail={openDetail} />
         ) : (
-          <PreOpps preopps={filteredPreopps} allRows={preopps} weeks={weeks} openDetail={openDetail} mode={view} />
+          <PreOpps preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode={view} />
         )}
       </section>
 
