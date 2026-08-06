@@ -3,16 +3,53 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { Activity, PreOpp, Seller } from "../lib/googleSheets";
+import {
+  IconActivas,
+  IconCongeladas,
+  IconConvertidas,
+  IconCuentas,
+  IconDescartadas,
+  IconDetalle,
+  IconHubSpot,
+  IconOverview,
+  IconPipeline,
+  IconPreoportunidades,
+  IconPropuestas,
+} from "../components/PreOppIcons";
 
 const PIPELINE_VALUE_PER_PREOPP = 100000;
 const PIPELINE_VALUE_CLOUD_EMX = 180000;
 
-type View = "overview" | "preopps" | "convertidas";
-type Props = { sellers: Seller[]; preopps: PreOpp[]; activities: Activity[]; source: string; view?: View };
+type View = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas";
+type OperationalView = "preopps" | "convertidas" | "descartadas";
+
+type Props = {
+  sellers: Seller[];
+  preopps: PreOpp[];
+  activities: Activity[];
+  source: string;
+  updatedAt?: string;
+  view?: View;
+};
+
 type Tone = "blue" | "amber" | "green" | "teal" | "gray" | "red" | "purple";
-type DetailPreOpp = PreOpp & { previous?: PreOpp | null; changesCount?: number };
-type ExecutiveState = "Propuestas" | "Activas" | "Convertidas" | "Convertida Congelada" | "Descartadas" | "Sin clasificar";
+type MetricIconName = "pipeline" | "propuestas" | "activas" | "convertidas" | "congeladas" | "descartadas";
+type MenuIconName = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas";
+
+type ExecutiveState =
+  | "Propuestas"
+  | "Activas"
+  | "Convertidas"
+  | "Convertida Congelada"
+  | "Descartadas"
+  | "Sin clasificar";
+
+type DetailPreOpp = PreOpp & {
+  previous?: PreOpp | null;
+  changesCount?: number;
+};
 
 type ConsolidatedUnit = {
   key: string;
@@ -53,6 +90,37 @@ const PRODUCT_ORDER = [
   "Security Assessment + Epics",
   "Cloud EMx Ultra",
 ];
+
+const navItems = [
+  { id: "overview" as View, label: "Overview", href: "/", icon: "overview" as MenuIconName },
+  { id: "cuentas" as View, label: "Cuentas", href: "/cuentas", icon: "cuentas" as MenuIconName },
+  { id: "preopps" as View, label: "Pre-oportunidades", href: "/preopps", icon: "preopps" as MenuIconName },
+  { id: "convertidas" as View, label: "Convertidas", href: "/convertidas", icon: "convertidas" as MenuIconName },
+  { id: "descartadas" as View, label: "Descartadas", href: "/descartadas", icon: "descartadas" as MenuIconName },
+];
+
+const titles: Record<View, { title: string; description: string }> = {
+  overview: {
+    title: "Overview",
+    description: "Estado de cuentas por producto con una sola fila por cuenta.",
+  },
+  cuentas: {
+    title: "Cuentas",
+    description: "Vista ejecutiva por cuenta, con consolidado de productos y pipeline.",
+  },
+  preopps: {
+    title: "Pre-oportunidades",
+    description: "Comparación contra la semana anterior usando snapshot histórico.",
+  },
+  convertidas: {
+    title: "Convertidas",
+    description: "Pre-oportunidades convertidas a Cloud Sales.",
+  },
+  descartadas: {
+    title: "Descartadas",
+    description: "Pre-oportunidades descartadas y fuera del pool activo.",
+  },
+};
 
 function currency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -117,6 +185,10 @@ function getField(row: unknown, names: string[]) {
 }
 
 function formatETDateTime(date: Date) {
+  if (Number.isNaN(date.getTime())) {
+    return "Sin registro de actualización";
+  }
+
   const formatted = new Intl.DateTimeFormat("es-CO", {
     timeZone: "America/New_York",
     day: "2-digit",
@@ -143,9 +215,7 @@ function getPipelineEsperadoInicial(preopp: PreOpp) {
     ])
   );
 
-  if (valueFromRow > 0) {
-    return valueFromRow;
-  }
+  if (valueFromRow > 0) return valueFromRow;
 
   const product = String(preopp.producto || "").toLowerCase();
 
@@ -172,9 +242,7 @@ function getPipelineLogradoActual(preopp: PreOpp) {
     ])
   );
 
-  if (valueFromRow > 0) {
-    return valueFromRow;
-  }
+  if (valueFromRow > 0) return valueFromRow;
 
   return safeNumber(preopp.montoEstimado);
 }
@@ -185,7 +253,10 @@ function getExecutiveState(preopp: Pick<PreOpp, "etapa" | "estado">): ExecutiveS
   }
 
   if (preopp.etapa === "Identificada") return "Propuestas";
-  if (["Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa)) return "Activas";
+
+  if (["Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa)) {
+    return "Activas";
+  }
 
   if (
     [
@@ -204,44 +275,33 @@ function getExecutiveState(preopp: Pick<PreOpp, "etapa" | "estado">): ExecutiveS
   }
 
   if (preopp.etapa === "Frozen") return "Convertida Congelada";
-  if (["Descartada", "Closed Lost"].includes(preopp.etapa)) return "Descartadas";
+
+  if (["Descartada", "Closed Lost"].includes(preopp.etapa)) {
+    return "Descartadas";
+  }
 
   return "Sin clasificar";
 }
 
-function countsAsActive(preopp: PreOpp) {
-  return ["Identificada", "Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa);
-}
-
 function getAlert(preopp: PreOpp) {
-  if (["Descartada", "Closed Lost"].includes(preopp.etapa) && !preopp.motivoDescarte) return "Descartada sin motivo";
-  if (preopp.reemplazoRequerido === "Sí") return "Reemplazo requerido";
-  if (countsAsActive(preopp) && preopp.diasSinActividad >= 14) return "Sin actividad 14+ días";
-  if (countsAsActive(preopp) && preopp.diasSinActividad >= 7) return "Sin actividad 7+ días";
+  const state = getExecutiveState(preopp);
 
-  if (
-    [
-      "Convertida a Prospect",
-      "Convertida a Cloud Sales",
-      "Prospect",
-      "Qualified",
-      "Technical Validation",
-      "Business Validation",
-      "Committed",
-      "Commited",
-      "Launched",
-    ].includes(preopp.etapa)
-  ) {
-    return "Convertida";
+  if (state === "Descartadas" && !preopp.motivoDescarte) return "Descartada sin motivo";
+  if (preopp.reemplazoRequerido === "Sí") return "Reemplazo requerido";
+
+  if (["Identificada", "Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa)) {
+    if (preopp.diasSinActividad >= 14) return "Sin actividad 14+ días";
+    if (preopp.diasSinActividad >= 7) return "Sin actividad 7+ días";
   }
 
-  if (preopp.etapa === "Frozen") return "Convertida congelada";
+  if (state === "Convertidas") return "Convertida";
+  if (state === "Convertida Congelada") return "Convertida congelada";
 
   return "OK";
 }
 
 function getStageTone(stage: string): Tone {
-  if (stage === "Descartada") return "gray";
+  if (["Descartada", "Closed Lost"].includes(stage)) return "gray";
 
   if (
     [
@@ -263,6 +323,7 @@ function getStageTone(stage: string): Tone {
   if (stage === "Con monto estimado") return "teal";
   if (stage === "Interés detectado") return "blue";
   if (stage === "Validada por owner") return "green";
+  if (stage === "Sin histórico") return "gray";
 
   return "amber";
 }
@@ -277,14 +338,14 @@ function getStateTone(state: string): Tone {
   return "blue";
 }
 
-function stateIcon(state: ExecutiveState) {
-  if (state === "Propuestas") return "🔎";
-  if (state === "Activas") return "🏃‍➡️";
-  if (state === "Convertidas") return "🏆";
-  if (state === "Convertida Congelada") return "🧊";
-  if (state === "Descartadas") return "🏃";
+function stateIconName(state: ExecutiveState): MetricIconName | null {
+  if (state === "Propuestas") return "propuestas";
+  if (state === "Activas") return "activas";
+  if (state === "Convertidas") return "convertidas";
+  if (state === "Convertida Congelada") return "congeladas";
+  if (state === "Descartadas") return "descartadas";
 
-  return "—";
+  return null;
 }
 
 function stateLabel(state: ExecutiveState) {
@@ -307,10 +368,15 @@ function statePriority(state: ExecutiveState) {
   return 0;
 }
 
-function productFamily(product: string) {
+function productFamily(product: string = "") {
   const clean = product.toLowerCase();
 
-  if (clean.includes("app modernization") || clean.includes("modernization squads") || clean.includes("modernizacion") || clean.includes("modernización")) {
+  if (
+    clean.includes("app modernization") ||
+    clean.includes("modernization squads") ||
+    clean.includes("modernizacion") ||
+    clean.includes("modernización")
+  ) {
     return "App Modernization Squads";
   }
 
@@ -333,56 +399,99 @@ function isRadarProduct(preopp: PreOpp) {
   return Boolean(productFamily(preopp.producto));
 }
 
-function Pill({ children, tone = "blue" }: { children: React.ReactNode; tone?: Tone }) {
+function Pill({ children, tone = "blue" }: { children: ReactNode; tone?: Tone }) {
   return <span className={`pill pill-${tone}`}>{children}</span>;
 }
 
 function StagePill({ stage }: { stage: string }) {
-  return <Pill tone={getStageTone(stage)}>{stage}</Pill>;
+  return <Pill tone={getStageTone(stage)}>{stage || "Sin etapa"}</Pill>;
+}
+
+function MetricIcon({ name, size = 54 }: { name: MetricIconName; size?: number }) {
+  if (name === "pipeline") return <IconPipeline size={size} className="dashboard-icon" />;
+  if (name === "propuestas") return <IconPropuestas size={size} className="dashboard-icon" />;
+  if (name === "activas") return <IconActivas size={size} className="dashboard-icon" />;
+  if (name === "convertidas") return <IconConvertidas size={size} className="dashboard-icon" />;
+  if (name === "congeladas") return <IconCongeladas size={size} className="dashboard-icon" />;
+  return <IconDescartadas size={size} className="dashboard-icon" />;
+}
+
+function MenuIcon({ name, size = 23 }: { name: MenuIconName; size?: number }) {
+  if (name === "overview") return <IconOverview size={size} className="menu-svg-icon" />;
+  if (name === "cuentas") return <IconCuentas size={size} className="menu-svg-icon" />;
+  if (name === "preopps") return <IconPreoportunidades size={size} className="menu-svg-icon" />;
+  if (name === "convertidas") return <IconConvertidas size={size} className="menu-svg-icon" />;
+  return <IconDescartadas size={size} className="menu-svg-icon" />;
 }
 
 function KpiCard({
-  emoji,
+  icon,
   label,
   value,
   hint,
   tone = "blue",
+  href,
 }: {
-  emoji: string;
+  icon: MetricIconName;
   label: string;
   value: string | number;
   hint: string;
   tone?: Tone;
+  href?: string;
 }) {
-  return (
+  const card = (
     <article className={`kpi kpi-${tone}`}>
       <div className="kpi-copy">
         <span>{label}</span>
         <strong>{value}</strong>
         <small>{hint}</small>
       </div>
+
       <div className="kpi-emoji" aria-hidden="true">
-        {emoji}
+        <MetricIcon name={icon} />
       </div>
     </article>
   );
+
+  if (href) {
+    return (
+      <Link className="kpi-link" href={href}>
+        {card}
+      </Link>
+    );
+  }
+
+  return card;
 }
 
-function PipelineKpi({ esperado, logrado }: { esperado: number; logrado: number }) {
+function PipelineKpi({
+  esperado,
+  logrado,
+  label = "Pipeline PreOpp",
+  hint = "Pipeline vigente",
+  href,
+}: {
+  esperado: number;
+  logrado: number;
+  label?: string;
+  hint?: string;
+  href?: string;
+}) {
   const avance = esperado > 0 ? logrado / esperado : 0;
 
-  return (
+  const card = (
     <article className="kpi kpi-blue pipeline-kpi">
       <div className="kpi-copy pipeline-copy">
-        <span>Pipeline PreOpp</span>
+        <span>{label}</span>
         <strong>{currency(logrado)}</strong>
-        <small>Pipeline vigente</small>
+        <small>{hint}</small>
 
         <div className="pipeline-breakdown">
           <div>
             <b>{compactCurrency(esperado)}</b>
             <small>Esperado</small>
           </div>
+
           <div>
             <b>{percent(avance)}</b>
             <small>Avance</small>
@@ -391,32 +500,21 @@ function PipelineKpi({ esperado, logrado }: { esperado: number; logrado: number 
       </div>
 
       <div className="kpi-emoji" aria-hidden="true">
-        💰
+        <MetricIcon name="pipeline" />
       </div>
     </article>
   );
+
+  if (href) {
+    return (
+      <Link className="kpi-link" href={href}>
+        {card}
+      </Link>
+    );
+  }
+
+  return card;
 }
-
-const navItems = [
-  { id: "overview" as View, label: "Overview", href: "/", icon: "▦" },
-  { id: "preopps" as View, label: "Pre-oportunidades", href: "/preopps", icon: "📋" },
-  { id: "convertidas" as View, label: "Convertidas", href: "/convertidas", icon: "🏆" },
-];
-
-const titles: Record<View, { title: string; description: string }> = {
-  overview: {
-    title: "Overview",
-    description: "Estado de cuentas por producto con una sola fila por cuenta.",
-  },
-  preopps: {
-    title: "Pre-oportunidades",
-    description: "Progreso semanal de pre-oportunidades abiertas o descartadas.",
-  },
-  convertidas: {
-    title: "Convertidas",
-    description: "Progreso semanal de oportunidades convertidas a Cloud Sales.",
-  },
-};
 
 function weekIndexMap(preopps: PreOpp[]) {
   const weeks = unique(preopps.map((p) => p.semanaLabel || p.semanaId));
@@ -424,7 +522,7 @@ function weekIndexMap(preopps: PreOpp[]) {
 }
 
 function getRowKey(preopp: PreOpp) {
-  return `${preopp.cuenta}||${preopp.vendedor}||${productFamily(preopp.producto)}`;
+  return `${preopp.id}||${productFamily(preopp.producto)}`;
 }
 
 function getPreviousRow(current: PreOpp, allRows: PreOpp[], weeks: Map<string, number>) {
@@ -483,7 +581,6 @@ function consolidatePreOppUnits(filtered: PreOpp[], allRows: PreOpp[]): Consolid
 
   filtered.forEach((row) => {
     const family = productFamily(row.producto);
-
     if (!family) return;
 
     const key = `${row.cuenta}||${row.vendedor}||${family}`;
@@ -549,7 +646,7 @@ function getAccountProductRows(units: ConsolidatedUnit[]): AccountProductRow[] {
         };
       });
 
-      const allRows = accountUnits.flatMap((u) => u.rows);
+      const allRows = accountUnits.flatMap((unit) => unit.rows);
 
       return {
         key,
@@ -559,9 +656,9 @@ function getAccountProductRows(units: ConsolidatedUnit[]): AccountProductRow[] {
         pais: latest.pais,
         industria: latest.industria,
         productStatus,
-        products: unique(accountUnits.map((u) => u.productFamily)),
-        pipelineEsperado: accountUnits.reduce((sum, u) => sum + u.pipelineEsperado, 0),
-        pipelineLogrado: accountUnits.reduce((sum, u) => sum + u.pipelineLogrado, 0),
+        products: unique(accountUnits.map((unit) => unit.productFamily)),
+        pipelineEsperado: accountUnits.reduce((sum, unit) => sum + unit.pipelineEsperado, 0),
+        pipelineLogrado: accountUnits.reduce((sum, unit) => sum + unit.pipelineLogrado, 0),
         ultimaActividad: allRows.map((p) => p.ultimaActividad).filter(Boolean).sort().at(-1) || "Sin registro",
         alerta: unique(allRows.map(getAlert).filter((alert) => alert !== "OK")).join(" · ") || "OK",
         totalPreopps: accountUnits.length,
@@ -639,7 +736,13 @@ function getActivities(preopp: PreOpp, activities: Activity[]) {
   return base;
 }
 
-export default function DashboardClient({ sellers, preopps, activities, source, view = "overview" }: Props) {
+export default function DashboardClient({
+  preopps,
+  activities,
+  source,
+  updatedAt,
+  view = "overview",
+}: Props) {
   const pathname = usePathname();
 
   const [selectedSeller, setSelectedSeller] = useState("Todos");
@@ -649,11 +752,10 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   const [selectedAccount, setSelectedAccount] = useState("Todas");
   const [selectedWeek, setSelectedWeek] = useState("Todas");
   const [detail, setDetail] = useState<DetailPreOpp | null>(null);
-  const [lastUpdatedEt, setLastUpdatedEt] = useState("");
 
-  useEffect(() => {
-    setLastUpdatedEt(formatETDateTime(new Date()));
-  }, []);
+  const lastUpdatedEt = updatedAt
+    ? formatETDateTime(new Date(updatedAt))
+    : "Sin registro de actualización";
 
   const radarPreopps = useMemo(() => preopps.filter(isRadarProduct), [preopps]);
 
@@ -675,7 +777,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
           .filter((p) => selectedSeller === "Todos" || p.vendedor === selectedSeller)
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
-          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct || p.producto === selectedProduct)
+          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct)
           .map((p) => p.cuenta)
       ),
     ],
@@ -691,7 +793,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           .filter((p) => selectedWeek === "Todas" || p.semanaLabel === selectedWeek || p.semanaId === selectedWeek)
           .filter((p) => selectedAccount === "Todas" || p.cuenta === selectedAccount)
           .filter((p) => selectedState === "Todos" || getExecutiveState(p) === selectedState)
-          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct || p.producto === selectedProduct)
+          .filter((p) => selectedProduct === "Todos" || productFamily(p.producto) === selectedProduct)
           .map((p) => p.vendedor)
       ),
     ],
@@ -715,15 +817,21 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   );
 
   useEffect(() => {
-    if (selectedSeller !== "Todos" && !sellerOptions.includes(selectedSeller)) setSelectedSeller("Todos");
+    if (selectedSeller !== "Todos" && !sellerOptions.includes(selectedSeller)) {
+      setSelectedSeller("Todos");
+    }
   }, [selectedSeller, sellerOptions]);
 
   useEffect(() => {
-    if (selectedAccount !== "Todas" && !accountOptions.includes(selectedAccount)) setSelectedAccount("Todas");
+    if (selectedAccount !== "Todas" && !accountOptions.includes(selectedAccount)) {
+      setSelectedAccount("Todas");
+    }
   }, [selectedAccount, accountOptions]);
 
   useEffect(() => {
-    if (selectedProduct !== "Todos" && !productOptions.includes(selectedProduct)) setSelectedProduct("Todos");
+    if (selectedProduct !== "Todos" && !productOptions.includes(selectedProduct)) {
+      setSelectedProduct("Todos");
+    }
   }, [selectedProduct, productOptions]);
 
   const filteredPreopps = useMemo(
@@ -733,7 +841,7 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
         if (selectedRegion !== "Todas" && p.region !== selectedRegion) return false;
         if (selectedWeek !== "Todas" && p.semanaLabel !== selectedWeek && p.semanaId !== selectedWeek) return false;
         if (selectedState !== "Todos" && getExecutiveState(p) !== selectedState) return false;
-        if (selectedProduct !== "Todos" && productFamily(p.producto) !== selectedProduct && p.producto !== selectedProduct) return false;
+        if (selectedProduct !== "Todos" && productFamily(p.producto) !== selectedProduct) return false;
         if (selectedAccount !== "Todas" && p.cuenta !== selectedAccount) return false;
 
         return true;
@@ -742,7 +850,12 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   );
 
   const weeks = useMemo(() => weekIndexMap(radarPreopps), [radarPreopps]);
-  const consolidatedUnits = useMemo(() => consolidatePreOppUnits(filteredPreopps, radarPreopps), [filteredPreopps, radarPreopps]);
+
+  const consolidatedUnits = useMemo(
+    () => consolidatePreOppUnits(filteredPreopps, radarPreopps),
+    [filteredPreopps, radarPreopps]
+  );
+
   const accountProductRows = useMemo(() => getAccountProductRows(consolidatedUnits), [consolidatedUnits]);
 
   const productColumns = useMemo(() => {
@@ -757,7 +870,6 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   const descartadas = consolidatedUnits.filter((p) => p.state === "Descartadas").length;
 
   const pipelineGeneralUnits = consolidatedUnits.filter((unit) => !["Convertidas", "Descartadas"].includes(unit.state));
-
   const pipelinePropuestasUnits = consolidatedUnits.filter((unit) => unit.state === "Propuestas");
   const pipelineActivasUnits = consolidatedUnits.filter((unit) => unit.state === "Activas");
   const pipelineConvertidoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertidas");
@@ -766,12 +878,19 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
 
   const pipelineEsperadoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
   const pipelineLogradoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-
   const pipelinePropuestas = pipelinePropuestasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
   const pipelineActivas = pipelineActivasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
   const pipelineConvertido = pipelineConvertidoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
   const pipelineCongelado = pipelineCongeladoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
   const pipelineDescartado = pipelineDescartadoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+
+  const propuestasNoDescartadas = consolidatedUnits.filter((unit) => unit.state !== "Descartadas").length;
+  const propuestasNoConvertidas = consolidatedUnits.filter(
+    (unit) => !["Convertidas", "Convertida Congelada"].includes(unit.state)
+  ).length;
+
+  const porcentajeConvertidas = propuestasNoDescartadas > 0 ? convertidas / propuestasNoDescartadas : 0;
+  const porcentajeDescartadas = propuestasNoConvertidas > 0 ? descartadas / propuestasNoConvertidas : 0;
 
   const currentTitle = titles[view];
 
@@ -789,20 +908,37 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
     setDetail({ ...preopp, previous, changesCount: countChanges(preopp, previous) });
   }
 
+  const kpiModeClass =
+    view === "preopps" || view === "convertidas"
+      ? "kpi-row-four"
+      : view === "descartadas"
+        ? "kpi-row-three"
+        : "kpi-row-overview";
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
+        <a
+          className="brand brand-link"
+          href="https://www.escala24x7.com"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Ir al sitio web de Escala 24x7"
+        >
           <div className="brand-mark">◎</div>
           <div>
-            <strong>PreOpp Radar</strong>
+            <strong>
+              PreOpp
+              <br />
+              Radar
+            </strong>
             <span>
               Monitoreo semanal de
               <br />
               pre-oportunidades
             </span>
           </div>
-        </div>
+        </a>
 
         <nav className="nav" aria-label="Navegación principal">
           {navItems.map((item) => {
@@ -810,7 +946,9 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
 
             return (
               <Link key={item.id} href={item.href} className={activeLink ? "active" : ""}>
-                <span>{item.icon}</span>
+                <span className="nav-icon">
+                  <MenuIcon name={item.icon} />
+                </span>
                 {item.label}
               </Link>
             );
@@ -818,9 +956,19 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
         </nav>
 
         <div className="sidebar-footer">
-          <span>Última actualización</span>
-          <strong>{lastUpdatedEt || "Cargando..."}</strong>
-          <small>Fuente: {source}</small>
+          <div>
+            <span>Fuente</span>
+            <strong>PreOpp Radar</strong>
+          </div>
+
+          <div className="sidebar-footer-divider" />
+
+          <div>
+            <span>Última actualización</span>
+            <strong>Semanal · automático</strong>
+            <small>{lastUpdatedEt}</small>
+            <small>{source}</small>
+          </div>
         </div>
       </aside>
 
@@ -845,13 +993,54 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           <Filter label="Producto" value={selectedProduct} onChange={setSelectedProduct} options={productOptions} wide />
         </section>
 
-        <section className="kpi-row">
-          <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} />
-          <KpiCard emoji="🔎" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" />
-          <KpiCard emoji="🏃‍➡️" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" />
-          <KpiCard emoji="🏆" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
-          <KpiCard emoji="🧊" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" />
-          <KpiCard emoji="🏃" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
+        <section className={`kpi-row ${kpiModeClass}`}>
+          {view === "overview" && (
+            <>
+              <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} href="/preopps" />
+              <KpiCard icon="propuestas" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" href="/preopps" />
+              <KpiCard icon="activas" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" href="/preopps" />
+              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" href="/convertidas" />
+              <KpiCard icon="congeladas" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" href="/preopps" />
+              <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" href="/descartadas" />
+            </>
+          )}
+
+          {view === "cuentas" && (
+            <>
+              <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} label="Pipeline por cuenta" hint="Pipeline vigente" />
+              <KpiCard icon="propuestas" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" />
+              <KpiCard icon="activas" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" />
+              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
+              <KpiCard icon="congeladas" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" />
+              <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
+            </>
+          )}
+
+          {view === "preopps" && (
+            <>
+              <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} label="Pipeline en gestión" hint="No incluye convertidas ni descartadas" />
+              <KpiCard icon="propuestas" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" />
+              <KpiCard icon="activas" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" />
+              <KpiCard icon="congeladas" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" />
+            </>
+          )}
+
+          {view === "convertidas" && (
+            <>
+              <PipelineKpi esperado={pipelineConvertido} logrado={pipelineConvertido} label="Pipeline convertido" hint="Valor total convertido" />
+              <KpiCard icon="propuestas" label="Propuestas no descartadas" value={propuestasNoDescartadas} hint="Base de conversión" tone="blue" />
+              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
+              <KpiCard icon="convertidas" label="% conversión" value={percent(porcentajeConvertidas)} hint="Convertidas / no descartadas" tone="green" />
+            </>
+          )}
+
+          {view === "descartadas" && (
+            <>
+              <PipelineKpi esperado={pipelineDescartado} logrado={pipelineDescartado} label="Pipeline descartado" hint="Valor fuera del pool activo" />
+              <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
+              <KpiCard icon="descartadas" label="% descarte" value={percent(porcentajeDescartadas)} hint="Descartadas / no convertidas" tone="red" />
+            </>
+          )}
         </section>
 
         <section className="context-strip">
@@ -866,10 +1055,19 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
           <span>{consolidatedUnits.length} PreOpps consolidadas</span>
         </section>
 
-        {view === "overview" ? (
-          <Overview accounts={accountProductRows} productColumns={productColumns} openDetail={openDetail} />
-        ) : (
-          <PreOpps preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode={view} />
+        {view === "overview" && <Overview accounts={accountProductRows} productColumns={productColumns} />}
+        {view === "cuentas" && <Cuentas accounts={accountProductRows} productColumns={productColumns} />}
+
+        {view === "preopps" && (
+          <PreOppsTable preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode="preopps" />
+        )}
+
+        {view === "convertidas" && (
+          <PreOppsTable preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode="convertidas" />
+        )}
+
+        {view === "descartadas" && (
+          <PreOppsTable preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode="descartadas" />
         )}
       </section>
 
@@ -906,11 +1104,9 @@ function Filter({
 function Overview({
   accounts,
   productColumns,
-  openDetail,
 }: {
   accounts: AccountProductRow[];
   productColumns: string[];
-  openDetail: (preopp: PreOpp) => void;
 }) {
   return (
     <section className="panel overview-status-panel">
@@ -919,6 +1115,7 @@ function Overview({
           <h2>Estado de cuentas por producto</h2>
           <p>Una cuenta por fila. Los iconos reflejan el estatus consolidado de cada PreOpp por producto.</p>
         </div>
+
         <Pill tone="blue">{accounts.length} cuentas visibles</Pill>
       </div>
 
@@ -942,7 +1139,7 @@ function Overview({
                 <td data-label="Cuenta">
                   <b>{account.cuenta}</b>
                   <small>
-                    {account.region} · {account.pais} · {account.industria}
+                    {account.region || "Sin región"} · {account.pais || "Sin país"} · {account.industria || "Sin industria"}
                   </small>
                 </td>
 
@@ -955,18 +1152,15 @@ function Overview({
 
                 {productColumns.map((product) => {
                   const status = account.productStatus[product];
+                  const icon = status ? stateIconName(status.state) : null;
 
                   return (
                     <td data-label={product} key={`${account.key}-${product}`}>
-                      {status ? (
-                        <button
-                          className={`status-icon status-${getStateTone(status.state)}`}
-                          title={`${stateLabel(status.state)} · ${status.stage}`}
-                          onClick={() => openDetail(status.preopp)}
-                        >
-                          <span>{stateIcon(status.state)}</span>
+                      {status && icon ? (
+                        <span className={`status-icon status-${getStateTone(status.state)}`}>
+                          <MetricIcon name={icon} size={20} />
                           <small>{stateLabel(status.state)}</small>
-                        </button>
+                        </span>
                       ) : (
                         <span className="empty-status">—</span>
                       )}
@@ -975,23 +1169,116 @@ function Overview({
                 })}
               </tr>
             ))}
+
+            {!accounts.length && (
+              <tr>
+                <td colSpan={2 + productColumns.length}>
+                  <div className="empty-table-message">No hay cuentas visibles con los filtros actuales.</div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       <div className="legend status-legend">
-        <span>🔎 Propuesta</span>
-        <span>🏃‍➡️ Activa</span>
-        <span>🏆 Convertida</span>
-        <span>🧊 Congelada</span>
-        <span>🏃 Descartada</span>
+        <span>Propuesta</span>
+        <span>Activa</span>
+        <span>Convertida</span>
+        <span>Congelada</span>
+        <span>Descartada</span>
         <span>— Sin PreOpp</span>
       </div>
     </section>
   );
 }
 
-function PreOpps({
+function Cuentas({
+  accounts,
+  productColumns,
+}: {
+  accounts: AccountProductRow[];
+  productColumns: string[];
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div>
+          <h2>Resumen ejecutivo por cuenta</h2>
+          <p>Consolidado de productos, pipeline y cantidad de PreOpps asociadas.</p>
+        </div>
+
+        <Pill tone="blue">{accounts.length} cuentas visibles</Pill>
+      </div>
+
+      <div className="table-wrap">
+        <table className="data-table cuentas-table">
+          <thead>
+            <tr>
+              <th>Cuenta</th>
+              <th>Vendedor</th>
+              <th>Región</th>
+              {productColumns.map((product) => (
+                <th key={product}>{product}</th>
+              ))}
+              <th>Pipeline logrado</th>
+              <th>Pipeline esperado</th>
+              <th>PreOpps asociadas</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {accounts.map((account) => (
+              <tr key={account.key}>
+                <td data-label="Cuenta">
+                  <b>{account.cuenta}</b>
+                  <small>
+                    {account.pais || "Sin país"} · {account.industria || "Sin industria"}
+                  </small>
+                </td>
+
+                <td data-label="Vendedor">{account.vendedor}</td>
+                <td data-label="Región">{account.region || "Sin región"}</td>
+
+                {productColumns.map((product) => {
+                  const status = account.productStatus[product];
+                  const icon = status ? stateIconName(status.state) : null;
+
+                  return (
+                    <td data-label={product} key={`${account.key}-${product}`}>
+                      {status && icon ? (
+                        <span className={`status-icon status-${getStateTone(status.state)}`}>
+                          <MetricIcon name={icon} size={20} />
+                          <small>{stateLabel(status.state)}</small>
+                        </span>
+                      ) : (
+                        <span className="empty-status">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+
+                <td data-label="Pipeline logrado">{currency(account.pipelineLogrado)}</td>
+                <td data-label="Pipeline esperado">{currency(account.pipelineEsperado)}</td>
+                <td data-label="PreOpps asociadas">{account.totalPreopps}</td>
+              </tr>
+            ))}
+
+            {!accounts.length && (
+              <tr>
+                <td colSpan={7 + productColumns.length}>
+                  <div className="empty-table-message">No hay cuentas visibles con los filtros actuales.</div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function PreOppsTable({
   preopps,
   allRows,
   weeks,
@@ -1002,26 +1289,40 @@ function PreOpps({
   allRows: PreOpp[];
   weeks: Map<string, number>;
   openDetail: (preopp: PreOpp) => void;
-  mode: View;
+  mode: OperationalView;
 }) {
-  const baseRows = preopps.filter((p) =>
-    mode === "convertidas"
-      ? ["Convertidas", "Convertida Congelada"].includes(getExecutiveState(p))
-      : !["Convertidas", "Convertida Congelada"].includes(getExecutiveState(p))
-  );
+  const baseRows = preopps.filter((p) => {
+    const state = getExecutiveState(p);
+
+    if (mode === "convertidas") return ["Convertidas", "Convertida Congelada"].includes(state);
+    if (mode === "descartadas") return state === "Descartadas";
+
+    return !["Convertidas", "Convertida Congelada", "Descartadas"].includes(state);
+  });
 
   const rows = baseRows.map((p) => {
     const previous = getPreviousRow(p, allRows, weeks);
     return { current: p, previous, changes: countChanges(p, previous) };
   });
 
+  const pageTitle =
+    mode === "convertidas" ? "Convertidas" : mode === "descartadas" ? "Descartadas" : "Pre-oportunidades";
+
+  const pageDescription =
+    mode === "convertidas"
+      ? "Pre-oportunidades convertidas a Cloud Sales."
+      : mode === "descartadas"
+        ? "Pre-oportunidades descartadas y fuera del pool activo."
+        : "Comparación contra la semana anterior usando snapshot histórico. Las actividades se revisan desde “Ver más detalles”.";
+
   return (
     <section className="panel">
       <div className="panel-head">
         <div>
-          <h2>{mode === "convertidas" ? "Convertidas" : "Pre-oportunidades"}</h2>
-          <p>Comparación contra la semana anterior usando snapshot histórico. Las actividades se revisan desde “Ver detalles”.</p>
+          <h2>{pageTitle}</h2>
+          <p>{pageDescription}</p>
         </div>
+
         <Pill tone="blue">{rows.length} registros</Pill>
       </div>
 
@@ -1036,6 +1337,7 @@ function PreOpps({
               <th>Etapa real · semana pasada</th>
               <th>Semana pasada · monto</th>
               <th>Variación</th>
+              {mode === "descartadas" && <th>Motivo</th>}
               <th>Detalle</th>
             </tr>
           </thead>
@@ -1047,7 +1349,7 @@ function PreOpps({
               const delta = getPipelineLogradoActual(current) - safeNumber(previousAmount);
 
               return (
-                <tr key={`${current.id}-${current.semanaId}`} className="clickable-row" onClick={() => openDetail(current)}>
+                <tr key={`${current.id}-${current.semanaId}-${current.estado}`}>
                   <td data-label="Cuenta">
                     <b>{current.cuenta}</b>
                     <small>
@@ -1076,20 +1378,31 @@ function PreOpps({
                     <span className={delta > 0 ? "positive" : delta < 0 ? "negative" : "neutral"}>{currency(delta)}</span>
                   </td>
 
+                  {mode === "descartadas" && (
+                    <td data-label="Motivo">
+                      <span className="muted">{current.motivoDescarte || "Sin motivo registrado"}</span>
+                    </td>
+                  )}
+
                   <td data-label="Detalle">
-                    <button
-                      className="row-action"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openDetail(current);
-                      }}
-                    >
-                      Ver detalles <small>{changes} cambios</small>
+                    <button className="row-action" onClick={() => openDetail(current)}>
+                      <IconDetalle size={15} />
+                      <span>
+                        Ver más detalles <small>{changes} cambios</small>
+                      </span>
                     </button>
                   </td>
                 </tr>
               );
             })}
+
+            {!rows.length && (
+              <tr>
+                <td colSpan={mode === "descartadas" ? 9 : 8}>
+                  <div className="empty-table-message">No hay registros para esta vista con los filtros actuales.</div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -1099,11 +1412,14 @@ function PreOpps({
 
 function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; activities: Activity[]; onClose: () => void }) {
   const previous = preopp.previous;
+  const state = getExecutiveState(preopp);
   const montoAnterior = preopp.montoAnterior || previous?.montoEstimado || 0;
   const previousStage = preopp.etapaAnterior || previous?.etapa || "Sin snapshot";
+
   const relatedActivities = activities.filter(
     (activity) => String(activity.preoppId) === String(preopp.id) && activity.mostrarEnDetalle !== "No"
   );
+
   const hubspotLink = preopp.linkHubSpot || relatedActivities.find((activity) => activity.linkPreOpp)?.linkPreOpp || "";
 
   return (
@@ -1116,6 +1432,7 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
               {preopp.cuenta} · {productFamily(preopp.producto)}
             </p>
           </div>
+
           <button onClick={onClose} aria-label="Cerrar">
             ×
           </button>
@@ -1125,7 +1442,8 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
           <Detail label="Cuenta" value={preopp.cuenta} />
           <Detail label="Vendedor" value={preopp.vendedor} />
           <Detail label="Producto" value={productFamily(preopp.producto)} />
-          <Detail label="Etapa real esta semana" value={preopp.etapa} />
+          <Detail label="Estado dashboard" value={stateLabel(state)} />
+          <Detail label="Etapa real esta semana" value={preopp.etapa || "Sin etapa"} />
           <Detail label="Etapa real semana anterior" value={previousStage} />
           <Detail label="Pipeline esperado inicial" value={currency(getPipelineEsperadoInicial(preopp))} />
           <Detail label="Pipeline logrado" value={currency(getPipelineLogradoActual(preopp))} />
@@ -1133,13 +1451,19 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
           <Detail label="# de cambios" value={String(preopp.changesCount ?? 0)} />
           <Detail label="Fecha de creación" value={preopp.fechaCreacion || "Sin registro"} />
           <Detail label="Última modificación" value={preopp.ultimaActividad || "Sin registro"} />
+
+          {state === "Descartadas" && (
+            <Detail label="Motivo de descarte" value={preopp.motivoDescarte || "Sin motivo registrado"} />
+          )}
         </div>
 
         <div className="modal-section">
           <div className="modal-section-head">
             <h3>Actividades de la oportunidad</h3>
+
             {hubspotLink ? (
               <a className="mini-link" href={hubspotLink} target="_blank" rel="noreferrer">
+                <IconHubSpot size={16} />
                 Ver actividades en HubSpot
               </a>
             ) : (
@@ -1153,15 +1477,16 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
                 {activity.type === "Monto"
                   ? "💵"
                   : activity.type === "Descarte"
-                    ? "🏃"
+                    ? "↩"
                     : activity.type === "Señal"
-                      ? "🔎"
+                      ? "•"
                       : activity.type === "Cambio de etapa"
-                        ? "🔁"
+                        ? "↻"
                         : activity.type === "Semana pasada"
-                          ? "🕒"
+                          ? "◷"
                           : "•"}
               </span>
+
               <div>
                 <b>{activity.type}</b>
                 <small>

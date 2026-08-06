@@ -14,7 +14,7 @@ export default async function Page() {
       activities={data.activities}
       source={data.source}
       updatedAt={data.updatedAt}
-      view="cuentas"
+      view="descartadas"
     />
   );
 }
