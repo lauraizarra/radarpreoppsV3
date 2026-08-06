@@ -213,14 +213,6 @@ function countsAsActive(preopp: PreOpp) {
   return ["Identificada", "Validada por owner", "Interés detectado", "Con monto estimado"].includes(preopp.etapa);
 }
 
-function countsAsConverted(preopp: PreOpp) {
-  return getExecutiveState(preopp) === "Convertidas";
-}
-
-function countsAsConvertedOrFrozen(preopp: PreOpp) {
-  return ["Convertidas", "Convertida Congelada"].includes(getExecutiveState(preopp));
-}
-
 function getAlert(preopp: PreOpp) {
   if (["Descartada", "Closed Lost"].includes(preopp.etapa) && !preopp.motivoDescarte) return "Descartada sin motivo";
   if (preopp.reemplazoRequerido === "Sí") return "Reemplazo requerido";
@@ -384,7 +376,7 @@ function PipelineKpi({ esperado, logrado }: { esperado: number; logrado: number 
       <div className="kpi-copy pipeline-copy">
         <span>Pipeline PreOpp</span>
         <strong>{currency(logrado)}</strong>
-        <small>Pipeline no convertido</small>
+        <small>Pipeline vigente</small>
 
         <div className="pipeline-breakdown">
           <div>
@@ -764,12 +756,22 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
   const congeladas = consolidatedUnits.filter((p) => p.state === "Convertida Congelada").length;
   const descartadas = consolidatedUnits.filter((p) => p.state === "Descartadas").length;
 
-  const pipelinePreOppUnits = consolidatedUnits.filter((unit) => !["Convertidas", "Convertida Congelada"].includes(unit.state));
-  const pipelineConvertidoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertidas");
+  const pipelineGeneralUnits = consolidatedUnits.filter((unit) => !["Convertidas", "Descartadas"].includes(unit.state));
 
-  const pipelineEsperadoPreOpp = pipelinePreOppUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
-  const pipelineLogradoPreOpp = pipelinePreOppUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelinePropuestasUnits = consolidatedUnits.filter((unit) => unit.state === "Propuestas");
+  const pipelineActivasUnits = consolidatedUnits.filter((unit) => unit.state === "Activas");
+  const pipelineConvertidoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertidas");
+  const pipelineCongeladoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertida Congelada");
+  const pipelineDescartadoUnits = consolidatedUnits.filter((unit) => unit.state === "Descartadas");
+
+  const pipelineEsperadoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
+  const pipelineLogradoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+
+  const pipelinePropuestas = pipelinePropuestasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelineActivas = pipelineActivasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
   const pipelineConvertido = pipelineConvertidoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelineCongelado = pipelineCongeladoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+  const pipelineDescartado = pipelineDescartadoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
 
   const currentTitle = titles[view];
 
@@ -844,12 +846,12 @@ export default function DashboardClient({ sellers, preopps, activities, source, 
         </section>
 
         <section className="kpi-row">
-          <PipelineKpi esperado={pipelineEsperadoPreOpp} logrado={pipelineLogradoPreOpp} />
-          <KpiCard emoji="🔎" label="Propuestas" value={propuestas} hint="Etapa identificada" tone="blue" />
-          <KpiCard emoji="🏃‍➡️" label="Activas" value={activas} hint="En gestión" tone="green" />
+          <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} />
+          <KpiCard emoji="🔎" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" />
+          <KpiCard emoji="🏃‍➡️" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" />
           <KpiCard emoji="🏆" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
-          <KpiCard emoji="🧊" label="Congeladas" value={congeladas} hint="Convertidas en Frozen" tone="purple" />
-          <KpiCard emoji="🏃" label="Descartadas" value={descartadas} hint="Salen del pool activo" tone="gray" />
+          <KpiCard emoji="🧊" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" />
+          <KpiCard emoji="🏃" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
         </section>
 
         <section className="context-strip">
@@ -981,6 +983,7 @@ function Overview({
         <span>🔎 Propuesta</span>
         <span>🏃‍➡️ Activa</span>
         <span>🏆 Convertida</span>
+        <span>🧊 Congelada</span>
         <span>🏃 Descartada</span>
         <span>— Sin PreOpp</span>
       </div>
