@@ -2056,7 +2056,52 @@ td small {
   box-shadow: 0 0 0 4px rgba(0, 178, 150, 0.11);
 }
 
-.login-form button {
+.login-password-field {
+  position: relative;
+}
+
+.login-password-field input {
+  padding-right: 58px;
+}
+
+.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  color: #61728d;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.login-password-toggle:hover {
+  color: var(--brand-navy);
+  background: #edf6ff;
+  box-shadow: none;
+  transform: translateY(-50%);
+}
+
+.login-password-toggle:focus-visible {
+  outline: 3px solid rgba(0, 178, 150, 0.24);
+  outline-offset: 1px;
+}
+
+.login-password-toggle svg {
+  width: 22px;
+  height: 22px;
+}
+
+.login-submit-button {
   min-height: 52px;
   margin-top: 4px;
   border: 0;
@@ -2065,10 +2110,11 @@ td small {
   background: linear-gradient(135deg, var(--brand-teal), var(--brand-cyan));
   box-shadow: 0 16px 30px rgba(0, 178, 150, 0.22);
   font-weight: 800;
+  cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.login-form button:hover {
+.login-submit-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 20px 36px rgba(0, 178, 150, 0.28);
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { sanitizeReturnPath } from "../../lib/auth";
+import PasswordInput from "./PasswordInput";
 
 export const dynamic = "force-dynamic";
 
@@ -74,20 +75,11 @@ export default function LoginPage({ searchParams = {} }: LoginPageProps) {
         <form className="login-form" action="/api/login" method="post">
           <input type="hidden" name="next" value={nextPath} />
 
-          <label htmlFor="password">Contraseña</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            minLength={12}
-            maxLength={256}
-            required
-            autoFocus
-            placeholder="Ingresa la contraseña"
-          />
+          <PasswordInput />
 
-          <button type="submit">Ingresar de forma segura</button>
+          <button className="login-submit-button" type="submit">
+            Ingresar de forma segura
+          </button>
         </form>
 
         <div className="login-security-note">
