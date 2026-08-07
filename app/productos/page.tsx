@@ -1,5 +1,20 @@
-import { redirect } from "next/navigation";
+export const dynamic = "force-dynamic";
+export const revalidate = 300;
 
-export default function Page() {
-  redirect("/");
+import { loadData } from "../../lib/googleSheets";
+import DashboardClient from "../DashboardClient";
+
+export default async function Page() {
+  const data = await loadData();
+
+  return (
+    <DashboardClient
+      sellers={data.sellers}
+      preopps={data.preopps}
+      activities={data.activities}
+      source={data.source}
+      updatedAt={data.updatedAt}
+      view="productos"
+    />
+  );
 }
