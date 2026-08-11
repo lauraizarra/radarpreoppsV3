@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +22,7 @@ import {
 const PIPELINE_VALUE_PER_PREOPP = 100000;
 const PIPELINE_VALUE_CLOUD_EMX = 180000;
 
-type View = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas" | "vendedores" | "productos";
+type View = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas";
 type OperationalView = "preopps" | "convertidas" | "descartadas";
 
 type Props = {
@@ -37,7 +36,7 @@ type Props = {
 
 type Tone = "blue" | "amber" | "green" | "teal" | "gray" | "red" | "purple";
 type MetricIconName = "pipeline" | "propuestas" | "activas" | "convertidas" | "congeladas" | "descartadas";
-type MenuIconName = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas" | "leaderboard-ams" | "leaderboard-soluciones";
+type MenuIconName = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas";
 
 type ExecutiveState =
   | "Propuestas"
@@ -85,37 +84,6 @@ type AccountProductRow = {
   rows: PreOpp[];
 };
 
-
-type LeaderboardMode = "ams" | "soluciones";
-type LeaderboardStage =
-  | "Propuestas"
-  | "Activas"
-  | "Convertidas"
-  | "Convertida Congelada"
-  | "Descartadas";
-
-type LeaderboardRow = {
-  rank: number;
-  key: string;
-  label: string;
-  secondary: string;
-  total: number;
-  propuestas: number;
-  activas: number;
-  convertidas: number;
-  congeladas: number;
-  descartadas: number;
-  momentum: number;
-  rows: PreOpp[];
-};
-
-type LeaderboardDetail = {
-  mode: LeaderboardMode;
-  groupLabel: string;
-  stage: LeaderboardStage;
-  rows: PreOpp[];
-};
-
 const PRODUCT_ORDER = [
   "App Modernization Squads",
   "GenAI Squads",
@@ -123,14 +91,14 @@ const PRODUCT_ORDER = [
   "Cloud EMx Ultra",
 ];
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+
 const navItems = [
   { id: "overview" as View, label: "Overview", href: "/", icon: "overview" as MenuIconName },
   { id: "cuentas" as View, label: "Cuentas", href: "/cuentas", icon: "cuentas" as MenuIconName },
   { id: "preopps" as View, label: "Pre-oportunidades", href: "/preopps", icon: "preopps" as MenuIconName },
   { id: "convertidas" as View, label: "Convertidas", href: "/convertidas", icon: "convertidas" as MenuIconName },
   { id: "descartadas" as View, label: "Descartadas", href: "/descartadas", icon: "descartadas" as MenuIconName },
-  { id: "vendedores" as View, label: "Leaderboard AMs", href: "/vendedores", icon: "leaderboard-ams" as MenuIconName },
-  { id: "productos" as View, label: "Leaderboard Soluciones", href: "/productos", icon: "leaderboard-soluciones" as MenuIconName },
 ];
 
 const titles: Record<View, { title: string; description: string }> = {
@@ -153,14 +121,6 @@ const titles: Record<View, { title: string; description: string }> = {
   descartadas: {
     title: "Descartadas",
     description: "Pre-oportunidades descartadas y fuera del pool activo.",
-  },
-  vendedores: {
-    title: "PreOpp Leaderboard | AMs",
-    description: "Momentum comercial por AM: movimiento de PreOpps y conversiones de la semana.",
-  },
-  productos: {
-    title: "PreOpp Leaderboard | Soluciones",
-    description: "Momentum por solución: avance del portafolio PreOpp hacia conversión.",
   },
 };
 
@@ -529,91 +489,6 @@ function isRadarProduct(preopp: PreOpp) {
   return Boolean(productFamily(preopp.producto));
 }
 
-function uniqueLeaderboardPreOpps(rows: PreOpp[]) {
-  const byKey = new Map<string, PreOpp>();
-
-  rows.forEach((row) => {
-    const id = String(row.id || "").trim();
-    const family = productFamily(row.producto);
-    if (!id || !family) return;
-
-    byKey.set(`${id}||${family}`, row);
-  });
-
-  return Array.from(byKey.values());
-}
-
-function buildLeaderboardRows(rows: PreOpp[], mode: LeaderboardMode): LeaderboardRow[] {
-  const uniqueRows = uniqueLeaderboardPreOpps(rows);
-  const grouped = new Map<string, PreOpp[]>();
-
-  if (mode === "soluciones") {
-    PRODUCT_ORDER.forEach((product) => grouped.set(product, []));
-  }
-
-  uniqueRows.forEach((row) => {
-    const key = mode === "ams" ? String(row.vendedor || "Sin vendedor").trim() : productFamily(row.producto);
-    if (!key) return;
-
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)!.push(row);
-  });
-
-  return Array.from(grouped.entries())
-    .map(([key, groupRows]) => {
-      const propuestas = groupRows.filter((row) => getExecutiveState(row) === "Propuestas").length;
-      const activas = groupRows.filter((row) => getExecutiveState(row) === "Activas").length;
-      const convertidas = groupRows.filter((row) => getExecutiveState(row) === "Convertidas").length;
-      const congeladas = groupRows.filter((row) => getExecutiveState(row) === "Convertida Congelada").length;
-      const descartadas = groupRows.filter((row) => getExecutiveState(row) === "Descartadas").length;
-      const total = propuestas + activas + convertidas + congeladas + descartadas;
-      const momentum = total > 0 ? convertidas / total : 0;
-
-      const secondary =
-        mode === "ams"
-          ? unique(groupRows.map((row) => row.region)).join(" · ") || "Sin región"
-          : `${unique(groupRows.map((row) => row.vendedor)).length} AM${unique(groupRows.map((row) => row.vendedor)).length === 1 ? "" : "s"}`;
-
-      return {
-        rank: 0,
-        key,
-        label: key,
-        secondary,
-        total,
-        propuestas,
-        activas,
-        convertidas,
-        congeladas,
-        descartadas,
-        momentum,
-        rows: groupRows,
-      };
-    })
-    .sort(
-      (a, b) =>
-        b.convertidas - a.convertidas ||
-        b.momentum - a.momentum ||
-        b.activas - a.activas ||
-        b.total - a.total ||
-        a.label.localeCompare(b.label, "es")
-    )
-    .map((row, index) => ({ ...row, rank: index + 1 }));
-}
-
-function leaderboardStageRows(row: LeaderboardRow, stage: LeaderboardStage) {
-  return row.rows
-    .filter((preopp) => getExecutiveState(preopp) === stage)
-    .sort((a, b) =>
-      safeNumber(getPipelineLogradoActual(b)) - safeNumber(getPipelineLogradoActual(a)) ||
-      a.cuenta.localeCompare(b.cuenta, "es")
-    );
-}
-
-function leaderboardStageLabel(stage: LeaderboardStage) {
-  if (stage === "Convertida Congelada") return "Congeladas";
-  return stage;
-}
-
 function Pill({ children, tone = "blue" }: { children: ReactNode; tone?: Tone }) {
   return <span className={`pill pill-${tone}`}>{children}</span>;
 }
@@ -636,23 +511,7 @@ function MenuIcon({ name, size = 23 }: { name: MenuIconName; size?: number }) {
   if (name === "cuentas") return <IconCuentas size={size} className="menu-svg-icon" />;
   if (name === "preopps") return <IconPreoportunidades size={size} className="menu-svg-icon" />;
   if (name === "convertidas") return <IconConvertidas size={size} className="menu-svg-icon" />;
-  if (name === "descartadas") return <IconDescartadas size={size} className="menu-svg-icon" />;
-
-  const src =
-    name === "leaderboard-ams"
-      ? "/preopp-icons/leaderboard-medal.png"
-      : "/preopp-icons/leaderboard-rocket.png";
-
-  return (
-    <Image
-      src={src}
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-      className="leaderboard-menu-icon"
-    />
-  );
+  return <IconDescartadas size={size} className="menu-svg-icon" />;
 }
 
 function KpiCard({
@@ -1004,7 +863,6 @@ export default function DashboardClient({
   const [sellerSearch, setSellerSearch] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [detail, setDetail] = useState<DetailPreOpp | null>(null);
-  const [leaderboardDetail, setLeaderboardDetail] = useState<LeaderboardDetail | null>(null);
 
   const [lastUpdatedEt, setLastUpdatedEt] = useState(
     "Sin registro de actualización"
@@ -1219,72 +1077,6 @@ export default function DashboardClient({
     return PRODUCT_ORDER.filter((product) => dynamic.includes(product));
   }, [consolidatedUnits]);
 
-  const leaderboardPreopps = useMemo(
-    () => uniqueLeaderboardPreOpps(filteredPreopps),
-    [filteredPreopps]
-  );
-
-  /*
-   * Para el Leaderboard de AMs, el ranking se calcula sin aplicar el filtro
-   * de vendedor. Así, cuando se selecciona un AM, conserva su posición real
-   * dentro del ranking de la semana y del resto de filtros activos.
-   */
-  const sellerRankingUniverse = useMemo(
-    () =>
-      radarPreopps.filter((p) => {
-        if (selectedRegion !== "Todas" && p.region !== selectedRegion) return false;
-        if (!matchesWeek(p, selectedWeek)) return false;
-        if (selectedState !== "Todos" && getExecutiveState(p) !== selectedState) return false;
-        if (selectedProduct !== "Todos" && productFamily(p.producto) !== selectedProduct) return false;
-        if (selectedProduct === "Todos" && !includesFilterText(productFamily(p.producto), productSearch)) return false;
-        if (selectedAccount !== "Todas" && p.cuenta !== selectedAccount) return false;
-        if (selectedAccount === "Todas" && !includesFilterText(p.cuenta, accountSearch)) return false;
-
-        return true;
-      }),
-    [
-      radarPreopps,
-      selectedRegion,
-      selectedWeek,
-      selectedState,
-      selectedProduct,
-      productSearch,
-      selectedAccount,
-      accountSearch,
-    ]
-  );
-
-  const sellerRankMap = useMemo(
-    () =>
-      new Map(
-        buildLeaderboardRows(sellerRankingUniverse, "ams").map((row) => [row.key, row.rank])
-      ),
-    [sellerRankingUniverse]
-  );
-
-  const sellerLeaderboard = useMemo(
-    () =>
-      buildLeaderboardRows(leaderboardPreopps, "ams").map((row) => ({
-        ...row,
-        rank: sellerRankMap.get(row.key) ?? row.rank,
-      })),
-    [leaderboardPreopps, sellerRankMap]
-  );
-
-  const solutionLeaderboard = useMemo(() => {
-    const rows = buildLeaderboardRows(leaderboardPreopps, "soluciones");
-
-    if (selectedProduct !== "Todos") {
-      return rows.filter((row) => row.label === selectedProduct);
-    }
-
-    if (productSearch) {
-      return rows.filter((row) => includesFilterText(row.label, productSearch));
-    }
-
-    return rows;
-  }, [leaderboardPreopps, selectedProduct, productSearch]);
-
   const propuestas = consolidatedUnits.filter((p) => p.state === "Propuestas").length;
   const activas = consolidatedUnits.filter((p) => p.state === "Activas").length;
   const convertidas = consolidatedUnits.filter((p) => p.state === "Convertidas").length;
@@ -1331,18 +1123,6 @@ export default function DashboardClient({
   function openDetail(preopp: PreOpp) {
     const previous = getPreviousRow(preopp, radarPreopps, weeks);
     setDetail({ ...preopp, previous, changesCount: countChanges(preopp, previous) });
-  }
-
-  function openLeaderboardStage(row: LeaderboardRow, stage: LeaderboardStage, mode: LeaderboardMode) {
-    const rows = leaderboardStageRows(row, stage);
-    if (!rows.length) return;
-
-    setLeaderboardDetail({
-      mode,
-      groupLabel: row.label,
-      stage,
-      rows,
-    });
   }
 
   const kpiModeClass =
@@ -1402,7 +1182,7 @@ export default function DashboardClient({
 
           <div>
             <span>Última actualización</span>
-            <strong>Automático · cada 12 h</strong>
+            <strong>Semanal · automático</strong>
             <small>{lastUpdatedEt}</small>
             <small>{source}</small>
           </div>
@@ -1470,8 +1250,7 @@ export default function DashboardClient({
           />
         </section>
 
-        {view !== "vendedores" && view !== "productos" && (
-          <section className={`kpi-row ${kpiModeClass}`}>
+        <section className={`kpi-row ${kpiModeClass}`}>
           {view === "overview" && (
             <>
               <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} href="/preopps" />
@@ -1519,8 +1298,7 @@ export default function DashboardClient({
               <KpiCard icon="descartadas" label="% descarte" value={percent(porcentajeDescartadas)} hint="Descartadas / no convertidas" tone="red" />
             </>
           )}
-          </section>
-        )}
+        </section>
 
         <section className="context-strip">
           <strong>Vista actual:</strong>
@@ -1530,22 +1308,8 @@ export default function DashboardClient({
           <span>{sellerSearch || selectedSeller}</span>
           <span>{selectedState}</span>
           <span>{productSearch || selectedProduct}</span>
-          {view === "vendedores" ? (
-            <>
-              <span>{sellerLeaderboard.length} AMs</span>
-              <span>{leaderboardPreopps.length} PreOpps</span>
-            </>
-          ) : view === "productos" ? (
-            <>
-              <span>{solutionLeaderboard.length} soluciones</span>
-              <span>{leaderboardPreopps.length} PreOpps</span>
-            </>
-          ) : (
-            <>
-              <span>{accountProductRows.length} cuentas</span>
-              <span>{consolidatedUnits.length} PreOpps consolidadas</span>
-            </>
-          )}
+          <span>{accountProductRows.length} cuentas</span>
+          <span>{consolidatedUnits.length} PreOpps consolidadas</span>
         </section>
 
         {view === "overview" && <Overview accounts={accountProductRows} productColumns={productColumns} />}
@@ -1562,285 +1326,10 @@ export default function DashboardClient({
         {view === "descartadas" && (
           <PreOppsTable preopps={filteredPreopps} allRows={radarPreopps} weeks={weeks} openDetail={openDetail} mode="descartadas" />
         )}
-
-        {view === "vendedores" && (
-          <LeaderboardTable
-            mode="ams"
-            rows={sellerLeaderboard}
-            onOpenStage={(row, stage) => openLeaderboardStage(row, stage, "ams")}
-          />
-        )}
-
-        {view === "productos" && (
-          <LeaderboardTable
-            mode="soluciones"
-            rows={solutionLeaderboard}
-            onOpenStage={(row, stage) => openLeaderboardStage(row, stage, "soluciones")}
-          />
-        )}
       </section>
-
-      {leaderboardDetail && (
-        <LeaderboardStageModal
-          detail={leaderboardDetail}
-          activities={activities}
-          onClose={() => setLeaderboardDetail(null)}
-          onOpenDetail={(preopp) => {
-            setLeaderboardDetail(null);
-            openDetail(preopp);
-          }}
-        />
-      )}
 
       {detail && <DetailModal preopp={detail} activities={activities} onClose={() => setDetail(null)} />}
     </main>
-  );
-}
-
-function LeaderboardTable({
-  mode,
-  rows,
-  onOpenStage,
-}: {
-  mode: LeaderboardMode;
-  rows: LeaderboardRow[];
-  onOpenStage: (row: LeaderboardRow, stage: LeaderboardStage) => void;
-}) {
-  const identityLabel = mode === "ams" ? "AM" : "Solución";
-  const title = mode === "ams" ? "Leaderboard de AMs" : "Leaderboard de Soluciones";
-  const description =
-    mode === "ams"
-      ? "Ranking por PreOpps convertidas. En empate, prioriza Momentum y luego PreOpps activas."
-      : "Ranking de las 4 soluciones por PreOpps convertidas. En empate, prioriza Momentum y luego PreOpps activas.";
-
-  const stageCells: Array<{
-    stage: LeaderboardStage;
-    label: string;
-    key: keyof Pick<LeaderboardRow, "propuestas" | "activas" | "convertidas" | "congeladas" | "descartadas">;
-  }> = [
-    { stage: "Propuestas", label: "Propuestas", key: "propuestas" },
-    { stage: "Activas", label: "Activas", key: "activas" },
-    { stage: "Convertidas", label: "Convertidas", key: "convertidas" },
-    { stage: "Convertida Congelada", label: "Congeladas", key: "congeladas" },
-    { stage: "Descartadas", label: "Descartadas", key: "descartadas" },
-  ];
-
-  return (
-    <section className="panel leaderboard-panel">
-      <div className="panel-head leaderboard-panel-head">
-        <div>
-          <h2>{title}</h2>
-          <p>{description}</p>
-        </div>
-
-        <div className="leaderboard-heading-badges">
-          <Pill tone="teal">{rows.length} {mode === "ams" ? "AMs" : "soluciones"}</Pill>
-          <Pill tone="blue">Clic en cada etapa para ver las PreOpps</Pill>
-        </div>
-      </div>
-
-      <div className="table-wrap leaderboard-table-wrap">
-        <table className="data-table leaderboard-table">
-          <thead>
-            <tr>
-              <th className="leaderboard-rank-col">#</th>
-              <th>{identityLabel}</th>
-              {stageCells.map((cell) => (
-                <th key={cell.stage} className="leaderboard-number-col">{cell.label}</th>
-              ))}
-              <th className="leaderboard-momentum-col">Momentum</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.key}>
-                <td data-label="Ranking" className="leaderboard-rank-cell">
-                  <span className={`leaderboard-rank leaderboard-rank-${Math.min(row.rank, 4)}`}>
-                    {row.rank}
-                  </span>
-                </td>
-
-                <td data-label={identityLabel} className="leaderboard-name-cell">
-                  <b>{row.label}</b>
-                  <small>{row.secondary} · {row.total} PreOpps</small>
-                </td>
-
-                {stageCells.map((cell) => {
-                  const count = row[cell.key];
-                  const stageShare = row.total > 0 ? count / row.total : 0;
-                  const tone = getStateTone(cell.stage);
-
-                  return (
-                    <td key={cell.stage} data-label={cell.label} className="leaderboard-stage-cell">
-                      <button
-                        type="button"
-                        className={`leaderboard-stage-button leaderboard-stage-${tone}`}
-                        disabled={count === 0}
-                        onClick={() => onOpenStage(row, cell.stage)}
-                        aria-label={`${cell.label}: ${count} PreOpps de ${row.label}`}
-                      >
-                        <strong>{count}</strong>
-                        <small>{percent(stageShare)} de base</small>
-                      </button>
-                    </td>
-                  );
-                })}
-
-                <td data-label="Momentum" className="leaderboard-momentum-cell">
-                  <div className="momentum-badge">
-                    <strong>{percent(row.momentum)}</strong>
-                    <small>{row.convertidas} de {row.total} convertidas</small>
-                  </div>
-                </td>
-              </tr>
-            ))}
-
-            {!rows.length && (
-              <tr>
-                <td colSpan={8}>
-                  <div className="empty-table-message">
-                    No hay PreOpps para construir el leaderboard con los filtros actuales.
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="leaderboard-footnote">
-        <span><b>Momentum</b> = PreOpps convertidas / total de PreOpps del AM o solución.</span>
-        <span>El ranking se ordena por Convertidas, luego Momentum y luego Activas.</span>
-      </div>
-    </section>
-  );
-}
-
-function LeaderboardStageModal({
-  detail,
-  activities,
-  onClose,
-  onOpenDetail,
-}: {
-  detail: LeaderboardDetail;
-  activities: Activity[];
-  onClose: () => void;
-  onOpenDetail: (preopp: PreOpp) => void;
-}) {
-  const stageLabel = leaderboardStageLabel(detail.stage);
-  const modeLabel = detail.mode === "ams" ? "AM" : "Solución";
-  const totalPipeline = detail.rows.reduce(
-    (sum, row) => sum + getPipelineLogradoActual(row),
-    0
-  );
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Detalle de ${stageLabel}`}>
-      <article className="modal-card side-panel-card leaderboard-detail-card">
-        <div className="modal-head">
-          <div>
-            <h2>{stageLabel} · {detail.groupLabel}</h2>
-            <p>
-              {modeLabel} · {detail.rows.length} PreOpps · {compactCurrency(totalPipeline)} de pipeline logrado
-            </p>
-          </div>
-
-          <button onClick={onClose} aria-label="Cerrar">
-            ×
-          </button>
-        </div>
-
-        <div className="leaderboard-detail-summary">
-          <Pill tone={getStateTone(detail.stage)}>{stageLabel}</Pill>
-          <Pill tone="blue">{detail.rows.length} oportunidades</Pill>
-        </div>
-
-        <div className="table-wrap leaderboard-detail-table-wrap">
-          <table className="data-table leaderboard-detail-table">
-            <thead>
-              <tr>
-                <th>Cuenta / PreOpp</th>
-                <th>AM</th>
-                <th>Solución</th>
-                <th>Etapa real</th>
-                <th>Pipeline logrado</th>
-                <th>Pipeline esperado</th>
-                <th>Última actividad</th>
-                <th>HubSpot</th>
-                <th>Detalle</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {detail.rows.map((preopp) => {
-                const hubspotLink =
-                  preopp.linkHubSpot ||
-                  activities.find(
-                    (activity) => String(activity.preoppId) === String(preopp.id) && activity.linkPreOpp
-                  )?.linkPreOpp ||
-                  "";
-
-                return (
-                <tr key={`${preopp.id}-${productFamily(preopp.producto)}-${preopp.estado}`}>
-                  <td data-label="Cuenta / PreOpp">
-                    <b>{preopp.cuenta}</b>
-                    <small>
-                      ID {preopp.id} · {preopp.region || "Sin región"} · {preopp.pais || "Sin país"}
-                    </small>
-                  </td>
-
-                  <td data-label="AM">
-                    <b>{preopp.vendedor || "Sin vendedor"}</b>
-                  </td>
-
-                  <td data-label="Solución">
-                    {productFamily(preopp.producto)}
-                  </td>
-
-                  <td data-label="Etapa real">
-                    <StagePill stage={preopp.etapa} />
-                    <small>{stateLabel(getExecutiveState(preopp))}</small>
-                  </td>
-
-                  <td data-label="Pipeline logrado">{currency(getPipelineLogradoActual(preopp))}</td>
-                  <td data-label="Pipeline esperado">{currency(getPipelineEsperadoInicial(preopp))}</td>
-
-                  <td data-label="Última actividad">
-                    <span className="muted">{preopp.ultimaActividad || "Sin registro"}</span>
-                  </td>
-
-                  <td data-label="HubSpot">
-                    {hubspotLink ? (
-                      <a className="mini-link leaderboard-hubspot-link" href={hubspotLink} target="_blank" rel="noreferrer">
-                        <IconHubSpot size={15} />
-                        Abrir
-                      </a>
-                    ) : (
-                      <span className="muted">Sin enlace</span>
-                    )}
-                  </td>
-
-                  <td data-label="Detalle">
-                    <button className="row-action leaderboard-detail-action" onClick={() => onOpenDetail(preopp)}>
-                      <IconDetalle size={15} />
-                      Ver detalle
-                    </button>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="modal-actions">
-          <button className="ghost-button" onClick={onClose}>
-            Cerrar
-          </button>
-        </div>
-      </article>
-    </div>
   );
 }
 
@@ -2117,6 +1606,79 @@ function Filter({
   );
 }
 
+function PaginationControls({
+  totalItems,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  itemLabel,
+}: {
+  totalItems: number;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  itemLabel: string;
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const start = totalItems ? (page - 1) * pageSize + 1 : 0;
+  const end = Math.min(page * pageSize, totalItems);
+
+  return (
+    <div className="pagination-bar">
+      <div className="pagination-summary">
+        <span>Mostrando</span>
+        <strong>{start}-{end}</strong>
+        <span>de</span>
+        <strong>{totalItems}</strong>
+        <span>{itemLabel}</span>
+      </div>
+
+      <div className="pagination-actions">
+        <label className="page-size-control">
+          <span>Ver</span>
+          <select
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {PAGE_SIZE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <span>por página</span>
+        </label>
+
+        <div className="pager-controls">
+          <button
+            type="button"
+            className="pager-button"
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+          >
+            Anterior
+          </button>
+
+          <span className="pager-indicator">
+            Página {totalPages === 0 ? 0 : page} de {totalPages}
+          </span>
+
+          <button
+            type="button"
+            className="pager-button"
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+          >
+            Siguiente
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Overview({
   accounts,
   productColumns,
@@ -2124,6 +1686,24 @@ function Overview({
   accounts: AccountProductRow[];
   productColumns: string[];
 }) {
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(accounts.length / pageSize));
+
+  useEffect(() => {
+    setPage(1);
+  }, [accounts.length, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const visibleAccounts = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return accounts.slice(start, start + pageSize);
+  }, [accounts, page, pageSize]);
+
   return (
     <section className="panel overview-status-panel">
       <div className="panel-head">
@@ -2134,6 +1714,15 @@ function Overview({
 
         <Pill tone="blue">{accounts.length} cuentas visibles</Pill>
       </div>
+
+      <PaginationControls
+        totalItems={accounts.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="cuentas"
+      />
 
       <div className="status-table-wrap">
         <table className="status-table">
@@ -2150,7 +1739,7 @@ function Overview({
           </thead>
 
           <tbody>
-            {accounts.map((account) => (
+            {visibleAccounts.map((account) => (
               <tr key={account.key}>
                 <td data-label="Cuenta">
                   <b>{account.cuenta}</b>
@@ -2197,6 +1786,15 @@ function Overview({
         </table>
       </div>
 
+      <PaginationControls
+        totalItems={accounts.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="cuentas"
+      />
+
       <div className="legend status-legend">
         <span>Propuesta</span>
         <span>Activa</span>
@@ -2216,6 +1814,24 @@ function Cuentas({
   accounts: AccountProductRow[];
   productColumns: string[];
 }) {
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(accounts.length / pageSize));
+
+  useEffect(() => {
+    setPage(1);
+  }, [accounts.length, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const visibleAccounts = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return accounts.slice(start, start + pageSize);
+  }, [accounts, page, pageSize]);
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -2226,6 +1842,15 @@ function Cuentas({
 
         <Pill tone="blue">{accounts.length} cuentas visibles</Pill>
       </div>
+
+      <PaginationControls
+        totalItems={accounts.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="cuentas"
+      />
 
       <div className="table-wrap">
         <table className="data-table cuentas-table">
@@ -2244,7 +1869,7 @@ function Cuentas({
           </thead>
 
           <tbody>
-            {accounts.map((account) => (
+            {visibleAccounts.map((account) => (
               <tr key={account.key}>
                 <td data-label="Cuenta">
                   <b>{account.cuenta}</b>
@@ -2290,6 +1915,15 @@ function Cuentas({
           </tbody>
         </table>
       </div>
+
+      <PaginationControls
+        totalItems={accounts.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="cuentas"
+      />
     </section>
   );
 }
@@ -2307,6 +1941,9 @@ function PreOppsTable({
   openDetail: (preopp: PreOpp) => void;
   mode: OperationalView;
 }) {
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
+
   const baseRows = preopps.filter((p) => {
     const state = getExecutiveState(p);
 
@@ -2316,10 +1953,29 @@ function PreOppsTable({
     return !["Convertidas", "Convertida Congelada", "Descartadas"].includes(state);
   });
 
-  const rows = baseRows.map((p) => {
-    const previous = getPreviousRow(p, allRows, weeks);
-    return { current: p, previous, changes: countChanges(p, previous) };
-  });
+  const rows = useMemo(
+    () =>
+      baseRows.map((p) => {
+        const previous = getPreviousRow(p, allRows, weeks);
+        return { current: p, previous, changes: countChanges(p, previous) };
+      }),
+    [baseRows, allRows, weeks]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+
+  useEffect(() => {
+    setPage(1);
+  }, [rows.length, pageSize, mode]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const visibleRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, page, pageSize]);
 
   const pageTitle =
     mode === "convertidas" ? "Convertidas" : mode === "descartadas" ? "Descartadas" : "Pre-oportunidades";
@@ -2342,6 +1998,15 @@ function PreOppsTable({
         <Pill tone="blue">{rows.length} registros</Pill>
       </div>
 
+      <PaginationControls
+        totalItems={rows.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="registros"
+      />
+
       <div className="table-wrap">
         <table className="data-table weekly-comparison-table">
           <thead>
@@ -2359,7 +2024,7 @@ function PreOppsTable({
           </thead>
 
           <tbody>
-            {rows.map(({ current, previous, changes }) => {
+            {visibleRows.map(({ current, previous, changes }) => {
               const previousAmount = current.montoAnterior || previous?.montoEstimado || 0;
               const previousStage = current.etapaAnterior || previous?.etapa || "";
               const delta = getPipelineLogradoActual(current) - safeNumber(previousAmount);
@@ -2422,6 +2087,15 @@ function PreOppsTable({
           </tbody>
         </table>
       </div>
+
+      <PaginationControls
+        totalItems={rows.length}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        itemLabel="registros"
+      />
     </section>
   );
 }
@@ -2455,15 +2129,9 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
         </div>
 
         <div className="detail-grid">
-          <Detail label="ID PreOpp" value={preopp.id || "Sin ID"} />
           <Detail label="Cuenta" value={preopp.cuenta} />
           <Detail label="Vendedor" value={preopp.vendedor} />
-          <Detail label="Región" value={preopp.region || "Sin región"} />
-          <Detail label="País" value={preopp.pais || "Sin país"} />
-          <Detail label="Industria" value={preopp.industria || "Sin industria"} />
           <Detail label="Producto" value={productFamily(preopp.producto)} />
-          <Detail label="Propensity" value={preopp.propensity || "Sin registro"} />
-          <Detail label="Señal de necesidad" value={preopp.senal || "Sin registro"} />
           <Detail label="Estado dashboard" value={stateLabel(state)} />
           <Detail label="Etapa real esta semana" value={preopp.etapa || "Sin etapa"} />
           <Detail label="Etapa real semana anterior" value={previousStage} />
