@@ -2618,3 +2618,98 @@ td small {
     width: 100%;
   }
 }
+
+/* =========================================================
+   AJUSTE FINAL MOBILE · KPI SIN SUPERPOSICIÓN
+   - <= 780px: una métrica por fila
+   - 781px a 1024px: se conserva el layout responsive de 2 columnas
+   ========================================================= */
+@media (max-width: 780px) {
+  .kpi-row,
+  .kpi-row-overview,
+  .kpi-row-three,
+  .kpi-row-four,
+  .kpi-row-leaderboard {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-flow: row !important;
+    grid-auto-columns: auto !important;
+    gap: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    scroll-snap-type: none !important;
+  }
+
+  .kpi-row > *,
+  .kpi-row > .kpi-link,
+  .kpi-row > .kpi,
+  .kpi-row-leaderboard > *,
+  .kpi-link,
+  .kpi,
+  .pipeline-kpi {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    scroll-snap-align: none !important;
+  }
+
+  .kpi {
+    min-height: 118px !important;
+    height: auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    overflow: hidden !important;
+  }
+
+  .kpi-copy {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+  }
+
+  .kpi-copy strong,
+  .pipeline-kpi .pipeline-copy strong {
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .kpi-emoji {
+    flex: 0 0 54px !important;
+    width: 54px !important;
+    min-width: 54px !important;
+    height: 54px !important;
+  }
+
+  .kpi-emoji .preopp-image-icon.dashboard-icon {
+    width: 48px !important;
+    height: 48px !important;
+    max-width: 48px !important;
+    max-height: 48px !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .kpi-row,
+  .kpi-row-overview,
+  .kpi-row-three,
+  .kpi-row-four,
+  .kpi-row-leaderboard {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .kpi {
+    padding: 14px !important;
+  }
+
+  .kpi-copy strong {
+    font-size: 24px !important;
+  }
+
+  .pipeline-kpi .pipeline-copy strong {
+    font-size: 27px !important;
+  }
+}
