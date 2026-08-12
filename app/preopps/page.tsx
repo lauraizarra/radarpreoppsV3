@@ -1,5 +1,4 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 300;
+export const revalidate = 60;
 
 import { loadData } from "../../lib/googleSheets";
 import DashboardClient from "../DashboardClient";

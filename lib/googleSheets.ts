@@ -120,7 +120,7 @@ async function fetchApi(view: string): Promise<ApiResponse> {
   url.searchParams.set("token", token);
 
   const res = await fetch(url.toString(), {
-    cache: "no-store",
+    next: { revalidate: 60 },
   });
 
   if (!res.ok) {
@@ -308,10 +308,14 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
       ])
     ),
     ultimaActividad: pick(r, [
-      "Ultima_Actividad",
-      "Última_Actividad",
       "Fecha_Ultima_Modificacion",
       "Fecha última modificación",
+      "Fecha de última modificación",
+      "Ultima_Modificacion",
+      "Última modificación",
+      "Last modified date",
+      "Ultima_Actividad",
+      "Última_Actividad",
     ]),
     diasSinActividad: toNumber(pick(r, ["Dias_sin_actividad"])),
     motivoDescarte: pick(r, [
@@ -321,8 +325,12 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
     ]),
     productOwner: pick(r, ["Product_Owner"]),
     fechaCreacion: pick(r, [
+      "Fecha_Creacion",
       "Fecha_creacion",
       "Fecha de creación",
+      "Fecha creación",
+      "Create date",
+      "Created at",
     ]),
     dealIdHubSpot: pick(r, ["Deal_ID_HubSpot"]),
     linkHubSpot: pick(r, [
