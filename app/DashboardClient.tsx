@@ -20,9 +20,6 @@ import {
   IconPropuestas,
 } from "../components/PreOppIcons";
 
-const PIPELINE_VALUE_PER_PREOPP = 100000;
-const PIPELINE_VALUE_CLOUD_EMX = 180000;
-
 type View = "overview" | "cuentas" | "preopps" | "convertidas" | "descartadas" | "vendedores" | "productos";
 type OperationalView = "preopps" | "convertidas" | "descartadas";
 
@@ -121,6 +118,7 @@ const PRODUCT_ORDER = [
   "GenAI Squads",
   "Security Assessment + Epics",
   "Cloud EMx Ultra",
+  "AWS Billing Solutions",
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -347,27 +345,12 @@ function formatETDateTime(date: Date) {
 }
 
 function getPipelineEsperadoInicial(preopp: PreOpp) {
-  const valueFromRow = safeNumber(
-    getField(preopp, [
-      "pipelineEsperado",
-      "Pipeline_Esperado_Inicial",
-      "Pipeline esperado inicial",
-      "Pipeline_Esperado",
-      "Pipeline Esperado",
-      "Pipeline_Estimado",
-      "Pipeline Estimado",
-    ])
-  );
-
-  if (valueFromRow > 0) return valueFromRow;
-
-  const product = String(preopp.producto || "").toLowerCase();
-
-  if (product.includes("cloud emx") || product.includes("emx")) {
-    return PIPELINE_VALUE_CLOUD_EMX;
-  }
-
-  return PIPELINE_VALUE_PER_PREOPP;
+  /*
+   * Fuente única de verdad: Pipeline_Esperado_Inicial de Vercel_View.
+   * No se recalcula por producto en el frontend. Un 0 recibido desde Sheets
+   * se conserva como 0.
+   */
+  return safeNumber(preopp.pipelineEsperado);
 }
 
 function getPipelineLogradoActual(preopp: PreOpp) {
@@ -522,6 +505,10 @@ function productFamily(product: string = "") {
 
   if (clean.includes("cloud emx") || clean.includes("emx ultra") || clean.includes("ultra ticket") || clean.includes("emx")) {
     return "Cloud EMx Ultra";
+  }
+
+  if (clean.includes("aws billing solutions") || clean.includes("billing solutions")) {
+    return "AWS Billing Solutions";
   }
 
   return "";
@@ -710,7 +697,7 @@ function PipelineKpi({
   hint?: string;
   href?: string;
 }) {
-  const avance = esperado > 0 ? logrado / esperado : 0;
+  const avance = esperado > 0 ? logrado / esperado : null;
 
   const card = (
     <article className="kpi kpi-blue pipeline-kpi">
@@ -726,7 +713,7 @@ function PipelineKpi({
           </div>
 
           <div>
-            <b>{percent(avance)}</b>
+            <b>{avance === null ? "—" : percent(avance)}</b>
             <small>Avance</small>
           </div>
         </div>
@@ -1287,30 +1274,90 @@ export default function DashboardClient({
     return rows;
   }, [leaderboardPreopps, selectedProduct, productSearch]);
 
-  const propuestas = consolidatedUnits.filter((p) => p.state === "Propuestas").length;
-  const activas = consolidatedUnits.filter((p) => p.state === "Activas").length;
-  const convertidas = consolidatedUnits.filter((p) => p.state === "Convertidas").length;
-  const congeladas = consolidatedUnits.filter((p) => p.state === "Convertida Congelada").length;
-  const descartadas = consolidatedUnits.filter((p) => p.state === "Descartadas").length;
+  /*
+   * ============================================================
+   * KPI Y PIPELINE
+   * ============================================================
+   * Los KPI se calculan por ID_PreOpp real.
+   * consolidatedUnits se mantiene SOLO para las tablas por cuenta/producto.
+   */
+  const kpiPreopps = useMemo(() => {
+    const byId = new Map<string, PreOpp>();
 
-  const pipelineGeneralUnits = consolidatedUnits.filter((unit) => !["Convertidas", "Descartadas"].includes(unit.state));
-  const pipelinePropuestasUnits = consolidatedUnits.filter((unit) => unit.state === "Propuestas");
-  const pipelineActivasUnits = consolidatedUnits.filter((unit) => unit.state === "Activas");
-  const pipelineConvertidoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertidas");
-  const pipelineCongeladoUnits = consolidatedUnits.filter((unit) => unit.state === "Convertida Congelada");
-  const pipelineDescartadoUnits = consolidatedUnits.filter((unit) => unit.state === "Descartadas");
+    filteredPreopps.forEach((preopp) => {
+      const id = String(preopp.id || "").trim();
+      if (!id) return;
 
-  const pipelineEsperadoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineEsperado), 0);
-  const pipelineLogradoGeneral = pipelineGeneralUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-  const pipelinePropuestas = pipelinePropuestasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-  const pipelineActivas = pipelineActivasUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-  const pipelineConvertido = pipelineConvertidoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-  const pipelineCongelado = pipelineCongeladoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
-  const pipelineDescartado = pipelineDescartadoUnits.reduce((sum, p) => sum + safeNumber(p.pipelineLogrado), 0);
+      // Si por histórico existiera más de una fila del mismo ID en la misma
+      // semana, la última fila vigente prevalece.
+      byId.set(id, preopp);
+    });
 
-  const propuestasNoDescartadas = consolidatedUnits.filter((unit) => unit.state !== "Descartadas").length;
-  const propuestasNoConvertidas = consolidatedUnits.filter(
-    (unit) => !["Convertidas", "Convertida Congelada"].includes(unit.state)
+    return Array.from(byId.values());
+  }, [filteredPreopps]);
+
+  const propuestasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Propuestas");
+  const activasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Activas");
+  const convertidasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Convertidas");
+  const congeladasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Convertida Congelada");
+  const descartadasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Descartadas");
+
+  const propuestas = propuestasRows.length;
+  const activas = activasRows.length;
+  const convertidas = convertidasRows.length;
+  const congeladas = congeladasRows.length;
+  const descartadas = descartadasRows.length;
+
+  // Esperado = suma exacta de Pipeline_Esperado_Inicial, sin excluir estados.
+  const pipelineEsperadoGeneral = kpiPreopps.reduce(
+    (sum, preopp) => sum + getPipelineEsperadoInicial(preopp),
+    0
+  );
+
+  // Vigente = Pipeline_Logrado_Esta_Semana excepto Convertidas y Descartadas.
+  // Las congeladas sí forman parte del vigente por definición operativa.
+  const pipelineLogradoGeneral = kpiPreopps
+    .filter((preopp) => !["Convertidas", "Descartadas"].includes(getExecutiveState(preopp)))
+    .reduce((sum, preopp) => sum + getPipelineLogradoActual(preopp), 0);
+
+  // Desglose del logrado de esta semana por Estado_Dashboard.
+  const pipelinePropuestas = propuestasRows.reduce(
+    (sum, preopp) => sum + getPipelineLogradoActual(preopp),
+    0
+  );
+  const pipelineActivas = activasRows.reduce(
+    (sum, preopp) => sum + getPipelineLogradoActual(preopp),
+    0
+  );
+  const pipelineConvertido = convertidasRows.reduce(
+    (sum, preopp) => sum + getPipelineLogradoActual(preopp),
+    0
+  );
+
+  // En Convertidas, el esperado conserva el Pipeline_Esperado_Inicial
+  // de las mismas PreOpp que ya fueron convertidas.
+  const pipelineEsperadoConvertido = convertidasRows.reduce(
+    (sum, preopp) => sum + getPipelineEsperadoInicial(preopp),
+    0
+  );
+  const pipelineCongelado = congeladasRows.reduce(
+    (sum, preopp) => sum + getPipelineLogradoActual(preopp),
+    0
+  );
+  const pipelineDescartado = descartadasRows.reduce(
+    (sum, preopp) => sum + getPipelineLogradoActual(preopp),
+    0
+  );
+
+  // La meta ideal de descarte es cero: no existe un pipeline esperado
+  // estándar de descarte para este programa.
+  const pipelineEsperadoDescartado = 0;
+
+  const propuestasNoDescartadas = kpiPreopps.filter(
+    (preopp) => getExecutiveState(preopp) !== "Descartadas"
+  ).length;
+  const propuestasNoConvertidas = kpiPreopps.filter(
+    (preopp) => !["Convertidas", "Convertida Congelada"].includes(getExecutiveState(preopp))
   ).length;
 
   const porcentajeConvertidas = propuestasNoDescartadas > 0 ? convertidas / propuestasNoDescartadas : 0;
@@ -1507,7 +1554,7 @@ export default function DashboardClient({
 
           {view === "convertidas" && (
             <>
-              <PipelineKpi esperado={pipelineConvertido} logrado={pipelineConvertido} label="Pipeline convertido" hint="Valor total convertido" />
+              <PipelineKpi esperado={pipelineEsperadoConvertido} logrado={pipelineConvertido} label="Pipeline convertido" hint="Valor total convertido" />
               <KpiCard icon="propuestas" label="Propuestas no descartadas" value={propuestasNoDescartadas} hint="Base de conversión" tone="blue" />
               <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
               <KpiCard icon="convertidas" label="% conversión" value={percent(porcentajeConvertidas)} hint="Convertidas / no descartadas" tone="green" />
@@ -1516,7 +1563,7 @@ export default function DashboardClient({
 
           {view === "descartadas" && (
             <>
-              <PipelineKpi esperado={pipelineDescartado} logrado={pipelineDescartado} label="Pipeline descartado" hint="Valor fuera del pool activo" />
+              <PipelineKpi esperado={pipelineEsperadoDescartado} logrado={pipelineDescartado} label="Pipeline descartado" hint="Valor fuera del pool activo" />
               <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
               <KpiCard icon="descartadas" label="% descarte" value={percent(porcentajeDescartadas)} hint="Descartadas / no convertidas" tone="red" />
             </>

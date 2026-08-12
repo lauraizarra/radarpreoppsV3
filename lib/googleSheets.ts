@@ -120,8 +120,8 @@ async function fetchApi(view: string): Promise<ApiResponse> {
   url.searchParams.set("token", token);
 
   const res = await fetch(url.toString(), {
-  next: { revalidate: 300 },
-});
+    cache: "no-store",
+  });
 
   if (!res.ok) {
     throw new Error(`No se pudo leer API ${view}: ${res.status}`);
@@ -223,6 +223,8 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
 
   const pipelineEsperado = toNumber(
     pick(r, [
+      "Pipeline_Esperado_Inicial",
+      "Pipeline esperado inicial",
       "Pipeline_Esperado",
       "Pipeline esperado",
       "Pipeline_Estimado",
