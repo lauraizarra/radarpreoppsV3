@@ -59,6 +59,7 @@ export type PreOpp = {
   fechaCreacion?: string;
   dealIdHubSpot?: string;
   linkHubSpot?: string;
+  sourcePreOpp: string;
   cuentaActiva: number;
   reemplazoRequerido: string;
 };
@@ -337,6 +338,19 @@ function mapPreOpp(r: Record<string, any>): PreOpp {
       "Link_HubSpot",
       "Link_PreOpp",
       "Link HubSpot",
+    ]),
+    sourcePreOpp: pick(r, [
+      "Source",
+      "Origen",
+      "Fuente",
+      "Source_PreOpp",
+      "Source PreOpp",
+      "Origen_PreOpp",
+      "Origen PreOpp",
+      "Fuente_PreOpp",
+      "Fuente PreOpp",
+      "Record Source",
+      "Original Source",
     ]),
     cuentaActiva: toNumber(
       pick(r, [

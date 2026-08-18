@@ -100,6 +100,7 @@ type LeaderboardRow = {
   propuestas: number;
   activas: number;
   convertidas: number;
+  preexistentes: number;
   congeladas: number;
   descartadas: number;
   momentum: number;
@@ -518,6 +519,27 @@ function isRadarProduct(preopp: PreOpp) {
   return Boolean(productFamily(preopp.producto));
 }
 
+function isPreexistingPreOpp(preopp: PreOpp) {
+  const source = normalizeFilterText(preopp.sourcePreOpp);
+
+  if (!source) return false;
+
+  /*
+   * Las PreOpp originales del programa nacen con Source = "Escala 24x7 PreOpp".
+   * Cualquier oportunidad convertida que entra al Radar con otro Source se
+   * considera preexistente: ya existía antes de incorporarse al 5x4.
+   */
+  return !source.includes("escala 24x7 preopp");
+}
+
+function convertedStateLabel(preopp: PreOpp, state: ExecutiveState) {
+  if (state === "Convertidas" && isPreexistingPreOpp(preopp)) {
+    return "Convertida preexistente";
+  }
+
+  return stateLabel(state);
+}
+
 function uniqueLeaderboardPreOpps(rows: PreOpp[]) {
   const byKey = new Map<string, PreOpp>();
 
@@ -552,7 +574,9 @@ function buildLeaderboardRows(rows: PreOpp[], mode: LeaderboardMode): Leaderboar
     .map(([key, groupRows]) => {
       const propuestas = groupRows.filter((row) => getExecutiveState(row) === "Propuestas").length;
       const activas = groupRows.filter((row) => getExecutiveState(row) === "Activas").length;
-      const convertidas = groupRows.filter((row) => getExecutiveState(row) === "Convertidas").length;
+      const convertidasRows = groupRows.filter((row) => getExecutiveState(row) === "Convertidas");
+      const convertidas = convertidasRows.length;
+      const preexistentes = convertidasRows.filter(isPreexistingPreOpp).length;
       const congeladas = groupRows.filter((row) => getExecutiveState(row) === "Convertida Congelada").length;
       const descartadas = groupRows.filter((row) => getExecutiveState(row) === "Descartadas").length;
       const total = propuestas + activas + convertidas + congeladas + descartadas;
@@ -572,6 +596,7 @@ function buildLeaderboardRows(rows: PreOpp[], mode: LeaderboardMode): Leaderboar
         propuestas,
         activas,
         convertidas,
+        preexistentes,
         congeladas,
         descartadas,
         momentum,
@@ -649,6 +674,7 @@ function KpiCard({
   label,
   value,
   hint,
+  subhint,
   tone = "blue",
   href,
 }: {
@@ -656,6 +682,7 @@ function KpiCard({
   label: string;
   value: string | number;
   hint: string;
+  subhint?: string;
   tone?: Tone;
   href?: string;
 }) {
@@ -665,6 +692,7 @@ function KpiCard({
         <span>{label}</span>
         <strong>{value}</strong>
         <small>{hint}</small>
+        {subhint && <small>{subhint}</small>}
       </div>
 
       <div className="kpi-emoji" aria-hidden="true">
@@ -1299,12 +1327,14 @@ export default function DashboardClient({
   const propuestasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Propuestas");
   const activasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Activas");
   const convertidasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Convertidas");
+  const preexistentesConvertidasRows = convertidasRows.filter(isPreexistingPreOpp);
   const congeladasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Convertida Congelada");
   const descartadasRows = kpiPreopps.filter((p) => getExecutiveState(p) === "Descartadas");
 
   const propuestas = propuestasRows.length;
   const activas = activasRows.length;
   const convertidas = convertidasRows.length;
+  const preexistentesConvertidas = preexistentesConvertidasRows.length;
   const congeladas = congeladasRows.length;
   const descartadas = descartadasRows.length;
 
@@ -1526,7 +1556,15 @@ export default function DashboardClient({
               <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} href="/preopps" />
               <KpiCard icon="propuestas" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" href="/preopps" />
               <KpiCard icon="activas" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" href="/preopps" />
-              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" href="/convertidas" />
+              <KpiCard
+                icon="convertidas"
+                label="Convertidas"
+                value={convertidas}
+                hint={`${compactCurrency(pipelineConvertido)} convertido`}
+                subhint={preexistentesConvertidas > 0 ? `${preexistentesConvertidas} ${preexistentesConvertidas === 1 ? "preexistente" : "preexistentes"}` : undefined}
+                tone="teal"
+                href="/convertidas"
+              />
               <KpiCard icon="congeladas" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" href="/preopps" />
               <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" href="/descartadas" />
             </>
@@ -1537,7 +1575,14 @@ export default function DashboardClient({
               <PipelineKpi esperado={pipelineEsperadoGeneral} logrado={pipelineLogradoGeneral} label="Pipeline por cuenta" hint="Pipeline vigente" />
               <KpiCard icon="propuestas" label="Propuestas" value={propuestas} hint={`${compactCurrency(pipelinePropuestas)} propuesto`} tone="blue" />
               <KpiCard icon="activas" label="Activas" value={activas} hint={`${compactCurrency(pipelineActivas)} activo`} tone="green" />
-              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
+              <KpiCard
+                icon="convertidas"
+                label="Convertidas"
+                value={convertidas}
+                hint={`${compactCurrency(pipelineConvertido)} convertido`}
+                subhint={preexistentesConvertidas > 0 ? `${preexistentesConvertidas} ${preexistentesConvertidas === 1 ? "preexistente" : "preexistentes"}` : undefined}
+                tone="teal"
+              />
               <KpiCard icon="congeladas" label="Congeladas" value={congeladas} hint={`${compactCurrency(pipelineCongelado)} congelado`} tone="purple" />
               <KpiCard icon="descartadas" label="Descartadas" value={descartadas} hint={`${compactCurrency(pipelineDescartado)} descartado`} tone="gray" />
             </>
@@ -1556,7 +1601,14 @@ export default function DashboardClient({
             <>
               <PipelineKpi esperado={pipelineEsperadoConvertido} logrado={pipelineConvertido} label="Pipeline convertido" hint="Valor total convertido" />
               <KpiCard icon="propuestas" label="Propuestas no descartadas" value={propuestasNoDescartadas} hint="Base de conversión" tone="blue" />
-              <KpiCard icon="convertidas" label="Convertidas" value={convertidas} hint={`${compactCurrency(pipelineConvertido)} convertido`} tone="teal" />
+              <KpiCard
+                icon="convertidas"
+                label="Convertidas"
+                value={convertidas}
+                hint={`${compactCurrency(pipelineConvertido)} convertido`}
+                subhint={preexistentesConvertidas > 0 ? `${preexistentesConvertidas} ${preexistentesConvertidas === 1 ? "preexistente" : "preexistentes"}` : undefined}
+                tone="teal"
+              />
               <KpiCard icon="convertidas" label="% conversión" value={percent(porcentajeConvertidas)} hint="Convertidas / no descartadas" tone="green" />
             </>
           )}
@@ -1821,6 +1873,11 @@ function LeaderboardTable({
                       >
                         <strong>{count}</strong>
                         <small>{percent(stageShare)} de base</small>
+                        {cell.stage === "Convertidas" && row.preexistentes > 0 && (
+                          <small>
+                            {row.preexistentes} {row.preexistentes === 1 ? "preexistente" : "preexistentes"}
+                          </small>
+                        )}
                       </button>
                     </td>
                   );
@@ -1948,7 +2005,7 @@ function LeaderboardStageModal({
 
                   <td data-label="Etapa real">
                     <StagePill stage={preopp.etapa} />
-                    <small>{stateLabel(getExecutiveState(preopp))}</small>
+                    <small>{convertedStateLabel(preopp, getExecutiveState(preopp))}</small>
                   </td>
 
                   <td data-label="Pipeline logrado">{currency(getPipelineLogradoActual(preopp))}</td>
@@ -2329,7 +2386,7 @@ function Overview({
                       {status && icon ? (
                         <span className={`status-icon status-${getStateTone(status.state)}`}>
                           <MetricIcon name={icon} size={20} />
-                          <small>{stateLabel(status.state)}</small>
+                          <small>{convertedStateLabel(status.preopp, status.state)}</small>
                         </span>
                       ) : <span className="empty-status">—</span>}
                     </td>
@@ -2412,7 +2469,7 @@ function Cuentas({
                       {status && icon ? (
                         <span className={`status-icon status-${getStateTone(status.state)}`}>
                           <MetricIcon name={icon} size={20} />
-                          <small>{stateLabel(status.state)}</small>
+                          <small>{convertedStateLabel(status.preopp, status.state)}</small>
                         </span>
                       ) : <span className="empty-status">—</span>}
                     </td>
@@ -2510,7 +2567,13 @@ function PreOppsTable({
               const delta = getPipelineLogradoActual(current) - safeNumber(previousAmount);
               return (
                 <tr key={`${current.id}-${current.semanaId}-${current.estado}`}>
-                  <td data-label="Cuenta"><b>{current.cuenta}</b><small>{current.vendedor} · {current.region}</small></td>
+                  <td data-label="Cuenta">
+                    <b>{current.cuenta}</b>
+                    {mode === "convertidas" && isPreexistingPreOpp(current) && (
+                      <small><strong>Preexistente</strong></small>
+                    )}
+                    <small>{current.vendedor} · {current.region}</small>
+                  </td>
                   <td data-label="Producto">{productFamily(current.producto)}<small>{current.propensity}</small></td>
                   <td data-label="Etapa real · esta semana"><StagePill stage={current.etapa} /></td>
                   <td data-label="Esta semana · monto">{currency(getPipelineLogradoActual(current))}</td>
@@ -2576,7 +2639,10 @@ function DetailModal({ preopp, activities, onClose }: { preopp: DetailPreOpp; ac
           <Detail label="Producto" value={productFamily(preopp.producto)} />
           <Detail label="Propensity" value={preopp.propensity || "Sin registro"} />
           <Detail label="Señal de necesidad" value={preopp.senal || "Sin registro"} />
-          <Detail label="Estado dashboard" value={stateLabel(state)} />
+          <Detail label="Estado dashboard" value={convertedStateLabel(preopp, state)} />
+          {isPreexistingPreOpp(preopp) && (
+            <Detail label="Origen en PreOpp Radar" value="Preexistente" />
+          )}
           <Detail label="Etapa real esta semana" value={preopp.etapa || "Sin etapa"} />
           <Detail label="Etapa real semana anterior" value={previousStage} />
           <Detail label="Pipeline esperado inicial" value={currency(getPipelineEsperadoInicial(preopp))} />
