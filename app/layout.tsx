@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "PreOpp Radar | Escala 24x7",
+  title: "PreOpp Radar | Monitoreo Comercial",
   description: "Dashboard semanal de pre-oportunidades comerciales",
 };
 

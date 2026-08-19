@@ -5,8 +5,8 @@ import PasswordInput from "./PasswordInput";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Acceso privado | PreOpp Radar",
-  description: "Acceso privado al dashboard PreOpp Radar",
+  title: "PreOpp Radar | Monitoreo Comercial",
+  description: "Dashboard semanal de pre-oportunidades comerciales",
   robots: {
     index: false,
     follow: false,
